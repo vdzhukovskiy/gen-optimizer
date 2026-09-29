@@ -19,12 +19,12 @@ add_executable(gen-optimizer
     main.cpp
     mainwindow.cpp
     mainwindow.h
-    mainwindow.ui
 )
 
 target_link_libraries(gen-optimizer PRIVATE
-    Qt${QT_VERSION_MAJOR}::Widgets
-    geometry-importer
+    Qt6::Widgets
+    geometry-importer::geometry-importer
+    map-renderer::map-renderer
 )
 
 add_subdirectory(lib)

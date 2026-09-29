@@ -1,21 +1,22 @@
 #pragma once
 
 #include <QMainWindow>
-
-QT_BEGIN_NAMESPACE
-namespace Ui {
-class MainWindow;
-}
-QT_END_NAMESPACE
+#include <QGraphicsScene>
+#include <QGraphicsView>
 
 class MainWindow : public QMainWindow
 {
-    Q_OBJECT
-
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow() override;
+   explicit MainWindow(const QString& shpPath, QWidget* parent = nullptr);
+
+protected:
+   void showEvent(QShowEvent* e) override;
 
 private:
-    Ui::MainWindow *ui;
+   void buildUi();
+   void loadMap(const QString& path);
+
+   QGraphicsScene* scene_ = nullptr;
+   QGraphicsView*  view_  = nullptr;
+   bool            fitted_ = false;
 };
