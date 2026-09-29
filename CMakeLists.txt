@@ -14,9 +14,6 @@ set(CMAKE_AUTORCC ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
-# --- GDAL -------------------------------------------------------------
-find_package(GDAL REQUIRED)
-
 # --- Target -----------------------------------------------------------
 add_executable(gen-optimizer
     main.cpp
@@ -27,5 +24,7 @@ add_executable(gen-optimizer
 
 target_link_libraries(gen-optimizer PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
-    GDAL::GDAL
+    geometry-importer
 )
+
+add_subdirectory(lib)
