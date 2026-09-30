@@ -20,7 +20,7 @@ protected:
 private:
    struct PendingLayer
    {
-      QString                  name;
+      gi::LayerInfo            info;
       std::vector<gi::Feature> features;
    };
 

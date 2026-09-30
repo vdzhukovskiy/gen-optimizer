@@ -41,33 +41,61 @@ void MainWindow::loadMap(const QString &path)
    {
       gi::Importer imp(path.toStdString());
 
-      for (const auto &name : imp.layerNames())
+      gi::Crs reference_crs;
+      bool    crs_checked = false;
+      bool    crs_mismatch = false;
+
+      for (auto &info : imp.layers())
       {
-         auto features = imp.readLayer(name);
-         auto bounds   = imp.layerBounds(name);
+         auto features = imp.readLayer(info.name);
+
+         if (!crs_checked)
+         {
+            reference_crs = info.crs;
+            crs_checked = true;
+         }
+         else if (!reference_crs.sameAs(info.crs))
+         {
+            crs_mismatch = true;
+         }
 
          if (!has_bounds_)
          {
-            union_bounds_ = bounds;
+            union_bounds_ = info.bounds;
             has_bounds_   = true;
          }
          else
          {
-            union_bounds_.minX = std::min(union_bounds_.minX, bounds.minX);
-            union_bounds_.minY = std::min(union_bounds_.minY, bounds.minY);
-            union_bounds_.maxX = std::max(union_bounds_.maxX, bounds.maxX);
-            union_bounds_.maxY = std::max(union_bounds_.maxY, bounds.maxY);
+            union_bounds_.minX = std::min(union_bounds_.minX, info.bounds.minX);
+            union_bounds_.minY = std::min(union_bounds_.minY, info.bounds.minY);
+            union_bounds_.maxX = std::max(union_bounds_.maxX, info.bounds.maxX);
+            union_bounds_.maxY = std::max(union_bounds_.maxY, info.bounds.maxY);
          }
 
-         pending_layers_.push_back(
-             {QString::fromStdString(name), std::move(features)});
+         pending_layers_.push_back({std::move(info), std::move(features)});
       }
 
       if (pending_layers_.empty())
+      {
          statusBar()->showMessage(tr("no layers loaded"));
-      else
-         statusBar()->showMessage(tr("loaded %1 layer(s), waiting for viewport")
-                                     .arg(pending_layers_.size()));
+         return;
+      }
+
+      const auto &first_crs = pending_layers_.front().info.crs;
+      const QString units = first_crs.units.empty()
+                                ? tr("unknown units")
+                                : QString::fromStdString(first_crs.units);
+      const QString crs_label = first_crs.epsg != 0
+                                    ? QStringLiteral("EPSG:%1").arg(first_crs.epsg)
+                                    : (first_crs.isValid() ? tr("custom") : tr("no CRS"));
+
+      QString msg = tr("loaded %1 layer(s), CRS %2 (%3), waiting for viewport")
+                        .arg(pending_layers_.size())
+                        .arg(crs_label, units);
+      if (crs_mismatch)
+         msg += tr(" [WARNING: layer CRS mismatch]");
+
+      statusBar()->showMessage(msg);
    }
    catch (const std::exception &e)
    {
