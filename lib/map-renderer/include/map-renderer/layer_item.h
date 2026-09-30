@@ -17,6 +17,9 @@ public:
              MapTransform transform,
              QGraphicsItem* parent = nullptr);
 
+   void setFeatures(std::vector<gi::Feature> features);
+   void setTransform(MapTransform transform);
+
    QRectF boundingRect() const override;
    void paint(QPainter* p,
               const QStyleOptionGraphicsItem* opt,

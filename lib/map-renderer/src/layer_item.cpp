@@ -78,6 +78,22 @@ LayerItem::LayerItem(std::vector<gi::Feature> features, MapTransform transform,
    rebuild();
 }
 
+void LayerItem::setFeatures(std::vector<gi::Feature> features)
+{
+   prepareGeometryChange();
+   features_ = std::move(features);
+   rebuild();
+   update();
+}
+
+void LayerItem::setTransform(MapTransform transform)
+{
+   prepareGeometryChange();
+   transform_ = transform;
+   rebuild();
+   update();
+}
+
 void LayerItem::rebuild()
 {
    paths_.clear();

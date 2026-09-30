@@ -1,6 +1,5 @@
 #include "mainwindow.h"
 
-#include "geometry-importer/importer.h"
 #include "map-renderer/layer_item.h"
 #include "map-renderer/map_transform.h"
 
@@ -8,6 +7,8 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QStatusBar>
+
+#include <algorithm>
 
 MainWindow::MainWindow(const QString &shpPath, QWidget *parent) : QMainWindow(parent)
 {
@@ -40,22 +41,33 @@ void MainWindow::loadMap(const QString &path)
    {
       gi::Importer imp(path.toStdString());
 
-      const QRectF viewport(0, 0, 1280, 800);
-
       for (const auto &name : imp.layerNames())
       {
          auto features = imp.readLayer(name);
-         auto bounds = imp.layerBounds(name);
-         auto xf = mr::MapTransform::fit(bounds, viewport);
+         auto bounds   = imp.layerBounds(name);
 
-         auto *item = new mr::LayerItem(std::move(features), xf);
-         scene_->addItem(item);
-         statusBar()->showMessage(tr("loaded layer %1: %2 features")
-                                     .arg(QString::fromStdString(name))
-                                     .arg(item->boundingRect().width(), 0, 'f', 0));
+         if (!has_bounds_)
+         {
+            union_bounds_ = bounds;
+            has_bounds_   = true;
+         }
+         else
+         {
+            union_bounds_.minX = std::min(union_bounds_.minX, bounds.minX);
+            union_bounds_.minY = std::min(union_bounds_.minY, bounds.minY);
+            union_bounds_.maxX = std::max(union_bounds_.maxX, bounds.maxX);
+            union_bounds_.maxY = std::max(union_bounds_.maxY, bounds.maxY);
+         }
+
+         pending_layers_.push_back(
+             {QString::fromStdString(name), std::move(features)});
       }
 
-      scene_->setSceneRect(scene_->itemsBoundingRect().adjusted(-20, -20, 20, 20));
+      if (pending_layers_.empty())
+         statusBar()->showMessage(tr("no layers loaded"));
+      else
+         statusBar()->showMessage(tr("loaded %1 layer(s), waiting for viewport")
+                                     .arg(pending_layers_.size()));
    }
    catch (const std::exception &e)
    {
@@ -63,12 +75,33 @@ void MainWindow::loadMap(const QString &path)
    }
 }
 
-void MainWindow::showEvent(QShowEvent* e)
+void MainWindow::buildLayerItems()
+{
+   if (pending_layers_.empty() || !has_bounds_)
+      return;
+
+   const QRectF viewport = view_->viewport()->rect();
+   const mr::MapTransform xf = mr::MapTransform::fit(union_bounds_, viewport);
+
+   for (auto &layer : pending_layers_)
+   {
+      auto *item = new mr::LayerItem(std::move(layer.features), xf);
+      scene_->addItem(item);
+   }
+   pending_layers_.clear();
+
+   scene_->setSceneRect(scene_->itemsBoundingRect().adjusted(-20, -20, 20, 20));
+}
+
+void MainWindow::showEvent(QShowEvent *e)
 {
    QMainWindow::showEvent(e);
-   if (!fitted_ && scene_ && !scene_->items().isEmpty())
+
+   if (!fitted_ && scene_ && !pending_layers_.empty())
    {
+      buildLayerItems();
       view_->fitInView(scene_->sceneRect(), Qt::KeepAspectRatio);
       fitted_ = true;
+      statusBar()->showMessage(tr("map ready"));
    }
 }
