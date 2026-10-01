@@ -12,7 +12,9 @@
 class MainWindow : public QMainWindow
 {
 public:
-   explicit MainWindow(const QString& shpPath, QWidget* parent = nullptr);
+   explicit MainWindow(const QString& path,
+                       const QString& filter = {},
+                       QWidget* parent = nullptr);
 
 protected:
    void showEvent(QShowEvent* e) override;
@@ -25,14 +27,17 @@ private:
    };
 
    void buildUi();
-   void loadMap(const QString& path);
+   void loadPath(const QString& path);
    void buildLayerItems();
 
    QGraphicsScene* scene_ = nullptr;
    QGraphicsView*  view_  = nullptr;
 
+   QString                   filter_;
    std::vector<PendingLayer> pending_layers_;
    gi::Bounds                union_bounds_{};
-   bool                      has_bounds_ = false;
-   bool                      fitted_     = false;
+   bool                      has_bounds_       = false;
+   bool                      fitted_           = false;
+   int                       loaded_count_     = 0;
+   int                       skipped_count_    = 0;
 };

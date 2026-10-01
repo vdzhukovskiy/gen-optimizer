@@ -83,11 +83,12 @@ Importer::Importer(std::filesystem::path path)
    : impl_(std::make_unique<Impl>())
 {
    GDALAllRegister();
+   const std::string path_str = path.string();
    impl_->ds = static_cast<GDALDataset*>(
-       GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
+       GDALOpenEx(path_str.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                   nullptr, nullptr, nullptr));
    if (!impl_->ds)
-      throw std::runtime_error("Importer: cannot open " + path.string());
+      throw std::runtime_error("Importer: cannot open " + path_str);
 }
 
 Importer::~Importer() = default;

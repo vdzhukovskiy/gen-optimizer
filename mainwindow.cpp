@@ -10,11 +10,12 @@
 
 #include <algorithm>
 
-MainWindow::MainWindow(const QString &shpPath, QWidget *parent) : QMainWindow(parent)
+MainWindow::MainWindow(const QString &path, const QString &filter, QWidget *parent)
+    : QMainWindow(parent), filter_(filter)
 {
    buildUi();
-   if (!shpPath.isEmpty())
-      loadMap(shpPath);
+   if (!path.isEmpty())
+      loadPath(path);
 }
 
 void MainWindow::buildUi()
@@ -35,24 +36,67 @@ void MainWindow::buildUi()
    statusBar()->showMessage(tr("ready"));
 }
 
-void MainWindow::loadMap(const QString &path)
+void MainWindow::loadPath(const QString &path)
 {
    try
    {
       gi::Importer imp(path.toStdString());
 
+      auto all_layers = imp.layers();
+
+      // Фильтр по имени слоя (подстрока, без учёта регистра).
+      if (!filter_.isEmpty())
+      {
+         std::vector<gi::LayerInfo> kept;
+         kept.reserve(all_layers.size());
+         for (auto &info : all_layers)
+         {
+            if (QString::fromStdString(info.name)
+                    .contains(filter_, Qt::CaseInsensitive))
+               kept.push_back(std::move(info));
+         }
+         all_layers = std::move(kept);
+      }
+
+      if (all_layers.empty())
+      {
+         statusBar()->showMessage(tr("no matching layers"));
+         return;
+      }
+
+      const int total = static_cast<int>(all_layers.size());
+      int index = 0;
+
       gi::Crs reference_crs;
-      bool    crs_checked = false;
+      bool    crs_checked  = false;
       bool    crs_mismatch = false;
 
-      for (auto &info : imp.layers())
+      for (auto &info : all_layers)
       {
-         auto features = imp.readLayer(info.name);
+         ++index;
+         const QString short_name = QString::fromStdString(info.name);
+         statusBar()->showMessage(
+             tr("loading [%1/%2] %3...").arg(index).arg(total).arg(short_name));
+         QCoreApplication::processEvents();
+
+         std::vector<gi::Feature> features;
+         try
+         {
+            features = imp.readLayer(info.name);
+         }
+         catch (const std::exception &e)
+         {
+            ++skipped_count_;
+            statusBar()->showMessage(
+                tr("skipped %1: %2").arg(short_name, e.what()));
+            QCoreApplication::processEvents();
+            continue;
+         }
 
          if (!crs_checked)
          {
             reference_crs = info.crs;
-            crs_checked = true;
+            crs_checked   = true;
          }
          else if (!reference_crs.sameAs(info.crs))
          {
@@ -73,11 +117,12 @@ void MainWindow::loadMap(const QString &path)
          }
 
          pending_layers_.push_back({std::move(info), std::move(features)});
+         ++loaded_count_;
       }
 
       if (pending_layers_.empty())
       {
-         statusBar()->showMessage(tr("no layers loaded"));
+         statusBar()->showMessage(tr("nothing loaded"));
          return;
       }
 
@@ -89,8 +134,9 @@ void MainWindow::loadMap(const QString &path)
                                     ? QStringLiteral("EPSG:%1").arg(first_crs.epsg)
                                     : (first_crs.isValid() ? tr("custom") : tr("no CRS"));
 
-      QString msg = tr("loaded %1 layer(s), CRS %2 (%3), waiting for viewport")
-                        .arg(pending_layers_.size())
+      QString msg = tr("loaded %1 layer(s), skipped %2, CRS %3 (%4)")
+                        .arg(loaded_count_)
+                        .arg(skipped_count_)
                         .arg(crs_label, units);
       if (crs_mismatch)
          msg += tr(" [WARNING: layer CRS mismatch]");
@@ -130,6 +176,7 @@ void MainWindow::showEvent(QShowEvent *e)
       buildLayerItems();
       view_->fitInView(scene_->sceneRect(), Qt::KeepAspectRatio);
       fitted_ = true;
-      statusBar()->showMessage(tr("map ready"));
+      statusBar()->showMessage(
+          tr("map ready: %1 layers").arg(loaded_count_));
    }
 }
