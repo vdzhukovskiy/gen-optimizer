@@ -1,3 +1,4 @@
 add_subdirectory(geometry-importer)
 add_subdirectory(map-renderer)
 add_subdirectory(generalization)
+add_subdirectory(core)

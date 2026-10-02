@@ -25,6 +25,7 @@ target_link_libraries(gen-optimizer PRIVATE
     Qt6::Widgets
     geometry-importer::geometry-importer
     map-renderer::map-renderer
+    core
 )
 
 add_subdirectory(lib)
