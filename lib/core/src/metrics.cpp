@@ -19,8 +19,6 @@ struct VertexCounter
 
    std::size_t operator()(const gi::LineString& ls) const { return ls.size(); }
 
-   std::size_t operator()(const gi::LinearRing& ring) const { return ring.size(); }
-
    std::size_t operator()(const gi::Polygon& poly) const
    {
       std::size_t n = 0;

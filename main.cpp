@@ -19,6 +19,7 @@ int main(int argc, char** argv)
    {
       QTimer::singleShot(0, &session, [&session, path, filter] {
          session.loadPath(path, filter);
+         session.regenerate();
       });
    }
 

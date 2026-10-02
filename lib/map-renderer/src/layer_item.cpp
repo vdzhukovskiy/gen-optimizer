@@ -72,10 +72,31 @@ QPainterPath buildPath(const gi::Geometry &g, const MapTransform &t)
 } // namespace
 
 LayerItem::LayerItem(std::vector<gi::Feature> features, MapTransform transform,
-                     QGraphicsItem *parent)
-    : QGraphicsItem(parent), features_(std::move(features)), transform_(transform)
+                     LayerStyle style, QGraphicsItem *parent)
+    : QGraphicsItem(parent),
+      features_(std::move(features)),
+      transform_(transform),
+      style_(style)
 {
+   setZValue(style_.z_value);
    rebuild();
+}
+
+void LayerItem::setStyle(LayerStyle style)
+{
+   style_ = style;
+   setZValue(style_.z_value);
+   update();
+}
+
+void LayerItem::paint(QPainter *p, const QStyleOptionGraphicsItem *, QWidget *)
+{
+   p->setRenderHint(QPainter::Antialiasing, true);
+   p->setPen(QPen(style_.color, 0, style_.pen_style));
+   p->setBrush(Qt::NoBrush);
+
+   for (const auto &path : paths_)
+      p->drawPath(path);
 }
 
 void LayerItem::setFeatures(std::vector<gi::Feature> features)
@@ -118,16 +139,6 @@ void LayerItem::rebuild()
 QRectF LayerItem::boundingRect() const
 {
    return bounds_;
-}
-
-void LayerItem::paint(QPainter *p, const QStyleOptionGraphicsItem *, QWidget *)
-{
-   p->setRenderHint(QPainter::Antialiasing, true);
-   p->setPen(QPen(Qt::black, 0)); // cosmetic pen: 1 px вне зависимости от зума
-   p->setBrush(Qt::NoBrush);
-
-   for (const auto &path : paths_)
-      p->drawPath(path);
 }
 
 } // namespace mr

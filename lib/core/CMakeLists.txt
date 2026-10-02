@@ -7,11 +7,13 @@ add_library(core STATIC
     include/core/session.h
     include/core/map_data.h
     src/session.cpp
+    src/metrics.cpp
 )
 
 target_include_directories(core PUBLIC include)
 target_link_libraries(core PUBLIC
     geometry-importer
+    generalization
     Qt6::Core
 )
 
