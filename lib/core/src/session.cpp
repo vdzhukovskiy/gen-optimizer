@@ -7,6 +7,20 @@
 
 #include <QCoreApplication>
 
+namespace 
+{
+   bool is_noise(const std::string& name)
+   {
+      static const std::vector<std::string> noise = {"bathymetry",         "graticules",
+                                                     "label_points",       "_seams",
+                                                     "wgs84_bounding_box", "antarctic_ice_shelves"};
+      for (const auto &n : noise)
+         if (name.find(n) != std::string::npos)
+            return true;
+      return false;
+   }
+}
+
 namespace core
 {
 
@@ -26,16 +40,21 @@ void Session::loadPath(const QString& path, const QString& filter)
       gi::Importer imp(path.toStdString());
       auto layers = imp.layers();
 
-      if (!filter.isEmpty())
+      std::vector<gi::LayerInfo> kept;
+      kept.reserve(layers.size());
+      for (auto& info : layers)
       {
-         std::vector<gi::LayerInfo> kept;
-         kept.reserve(layers.size());
-         for (auto& info : layers)
-            if (QString::fromStdString(info.name)
-                    .contains(filter, Qt::CaseInsensitive))
-               kept.push_back(std::move(info));
-         layers = std::move(kept);
+         const QString name = QString::fromStdString(info.name);
+
+         if (is_noise(info.name))
+            continue;
+
+         if (!filter.isEmpty() && !name.contains(filter, Qt::CaseInsensitive))
+            continue;
+
+         kept.push_back(std::move(info));
       }
+      layers = std::move(kept);
 
       if (layers.empty())
       {
