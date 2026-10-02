@@ -1,18 +1,23 @@
 #include "mainwindow.h"
 #include "core/session.h"
+#include "app/panels/data_panel.h"
+#include "app/panels/algorithm_panel.h"
+#include "app/panels/status_panel.h"
 
 #include "map-renderer/layer_item.h"
 #include "map-renderer/map_transform.h"
 
 #include <QKeyEvent>
 #include <QPainter>
+#include <QSplitter>
 #include <QStatusBar>
+#include <QVBoxLayout>
 
 namespace
 {
 
-constexpr QColor kOriginalColor   = QColor(0, 0, 0);   // светло-серый
-constexpr QColor kSimplifiedColor = QColor(255, 0, 255);         // чёрный
+constexpr QColor kOriginalColor   = QColor(0, 0, 0);
+constexpr QColor kSimplifiedColor = QColor(255, 0, 255);
 constexpr int    kOriginalZ       = 0;
 constexpr int    kSimplifiedZ     = 1;
 
@@ -26,15 +31,18 @@ MainWindow::MainWindow(core::Session* session, QWidget* parent)
    connect(session_, &core::Session::dataChanged,
            this,     &MainWindow::onDataChanged);
    connect(session_, &core::Session::generalizationDone,
-           this,     &MainWindow::onDataChanged);
+           this,     &MainWindow::onGeneralizationDone);
    connect(session_, &core::Session::statusMessage,
            this,     &MainWindow::onStatusMessage);
+
+   data_panel_->updateFrom(*session_);
+   status_panel_->updateFrom(*session_);
 }
 
 void MainWindow::buildUi()
 {
-   setWindowTitle(tr("gen-optimizer — O: original, S: simplified, A: overlay"));
-   resize(1280, 800);
+   setWindowTitle(tr("gen-optimizer — O original, S simplified, A overlay, G regenerate"));
+   resize(1400, 860);
 
    view_ = new QGraphicsView(this);
    view_->setRenderHint(QPainter::Antialiasing, true);
@@ -47,13 +55,38 @@ void MainWindow::buildUi()
    scene_->setSceneRect(0, 0, 1, 1);
    view_->setScene(scene_);
 
-   setCentralWidget(view_);
-   statusBar()->showMessage(tr("ready — O original, S simplified, A overlay"));
+   data_panel_   = new DataPanel(this);
+   algo_panel_   = new AlgorithmPanel(session_, this);
+   status_panel_ = new StatusPanel(this);
+
+   auto* right = new QWidget(this);
+   auto* rl = new QVBoxLayout(right);
+   rl->setContentsMargins(0, 0, 0, 0);
+   rl->addWidget(data_panel_);
+   rl->addWidget(algo_panel_);
+   rl->addWidget(status_panel_, 1);
+
+   auto* split = new QSplitter(Qt::Horizontal, this);
+   split->addWidget(view_);
+   split->addWidget(right);
+   split->setStretchFactor(0, 1);
+   split->setStretchFactor(1, 0);
+   split->setSizes({1000, 380});
+
+   setCentralWidget(split);
+   statusBar()->showMessage(tr("ready — O original, S simplified, A overlay, G regenerate"));
 }
 
 void MainWindow::onDataChanged()
 {
    rebuildScene();
+   data_panel_->updateFrom(*session_);
+}
+
+void MainWindow::onGeneralizationDone()
+{
+   rebuildScene();
+   status_panel_->updateFrom(*session_);
 }
 
 void MainWindow::onStatusMessage(const QString& message)
@@ -75,7 +108,6 @@ void MainWindow::rebuildScene()
       return;
 
    const mr::MapTransform xf = mr::MapTransform::fit(data.union_bounds, viewport);
-
    const bool has_gen = session_->hasGeneralization();
 
    layer_items_.reserve(data.layers.size());
@@ -99,7 +131,6 @@ void MainWindow::rebuildScene()
    }
 
    scene_->setSceneRect(scene_->itemsBoundingRect().adjusted(-20, -20, 20, 20));
-
    applyViewMode();
 
    if (!fitted_)
@@ -151,7 +182,6 @@ void MainWindow::keyPressEvent(QKeyEvent* e)
 void MainWindow::showEvent(QShowEvent* e)
 {
    QMainWindow::showEvent(e);
-
    if (scene_->items().isEmpty() && !session_->data().layers.empty())
       rebuildScene();
 }

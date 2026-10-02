@@ -19,6 +19,13 @@ add_executable(gen-optimizer
     main.cpp
     mainwindow.cpp
     mainwindow.h
+
+    app/panels/data_panel.cpp
+    app/panels/data_panel.h
+    app/panels/algorithm_panel.cpp
+    app/panels/algorithm_panel.h
+    app/panels/status_panel.cpp
+    app/panels/status_panel.h
 )
 
 target_link_libraries(gen-optimizer PRIVATE
@@ -26,6 +33,10 @@ target_link_libraries(gen-optimizer PRIVATE
     geometry-importer::geometry-importer
     map-renderer::map-renderer
     core
+)
+
+target_include_directories(gen-optimizer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 add_subdirectory(lib)

@@ -179,7 +179,7 @@ void Session::setAlgorithm(std::string_view name)
    specs_     = algorithm_->paramSpecs();
    params_.clear();
    for (const auto& s : specs_)
-      params_[s.name] = 0.9;//defaultParamValue(s);
+      params_[s.name] = defaultParamValue(s);
 
    clearGeneralization();
 

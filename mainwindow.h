@@ -4,7 +4,12 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 
+#include <vector>
+
 namespace core { class Session; }
+class DataPanel;
+class AlgorithmPanel;
+class StatusPanel;
 
 class MainWindow : public QMainWindow
 {
@@ -21,6 +26,7 @@ protected:
 
 private slots:
    void onDataChanged();
+   void onGeneralizationDone();
    void onStatusMessage(const QString& message);
 
 private:
@@ -28,12 +34,14 @@ private:
    void rebuildScene();
    void applyViewMode();
 
-   core::Session*  session_ = nullptr;
-   QGraphicsScene* scene_   = nullptr;
-   QGraphicsView*  view_    = nullptr;
+   core::Session*  session_  = nullptr;
+   QGraphicsScene* scene_    = nullptr;
+   QGraphicsView*  view_     = nullptr;
 
-   // Пара «оригинал / генерализация» на каждый слой. Оба указателя
-   // могут быть null — до загрузки и после clear().
+   DataPanel*      data_panel_ = nullptr;
+   AlgorithmPanel* algo_panel_ = nullptr;
+   StatusPanel*    status_panel_ = nullptr;
+
    struct LayerPair
    {
       QGraphicsItem* original   = nullptr;
