@@ -7,10 +7,13 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <cstdint>
 
 #include "core/map_data.h"
 #include "core/metrics.h"
 #include "generalization/algorithm.h"
+
+class QThread;
 
 namespace core
 {
@@ -30,13 +33,13 @@ public:
    void loadPath(const QString& path, const QString& filter = {});
 
    State          state() const noexcept { return state_; }
-   const MapData& data()  const noexcept { return data_; }
+   const MapData& data()  const noexcept { return *data_; }
    QString        lastError() const      { return last_error_; }
 
    // ─── Генерализация ───────────────────────────────────────────────
    // Устанавливает алгоритм и сбрасывает параметры к дефолтным.
    // Если имя неизвестно — бросает std::invalid_argument.
-   // Автоматически НЕ запускает пересчёт — вызывайте regenerate().
+   // Автоматически НЕ запускает пересчёт — вызывайте regenerateAsync().
    void setAlgorithm(std::string_view name);
 
    // Меняет один параметр. Автоматически НЕ запускает пересчёт.
@@ -47,8 +50,9 @@ public:
    void resetParams();
 
    // Прогоняет текущий алгоритм с текущими параметрами по всем слоям
-   // и пересчитывает метрики. Синхронная операция.
-   void regenerate();
+   // и пересчитывает метрики в фоне. Повторный запуск во время работы игнорируется.
+   void regenerateAsync();
+   bool isGeneralizing() const noexcept { return generalization_thread_ != nullptr; }
 
    std::string                    currentAlgorithm() const;
    const gen::ParamSet&           currentParams()    const noexcept;
@@ -67,6 +71,8 @@ signals:
    void dataChanged();
    void algorithmChanged(const QString& name);
    void paramsChanged();
+   void generalizationStarted();
+   void generalizationFinished();
    void generalizationDone();
    void errorOccurred(const QString& message);
    void statusMessage(const QString& message);
@@ -77,8 +83,10 @@ private:
    static double defaultParamValue(const gen::ParamSpec& spec);
 
    State   state_ = State::Idle;
-   MapData data_;
+   std::shared_ptr<MapData> data_ = std::make_shared<MapData>();
    QString last_error_;
+   QThread* generalization_thread_ = nullptr;
+   std::uint64_t input_revision_ = 0;
 
    std::unique_ptr<gen::GeneralizationAlgorithm> algorithm_;
    gen::ParamSet                                 params_;

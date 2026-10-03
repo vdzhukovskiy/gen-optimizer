@@ -172,7 +172,7 @@ void MainWindow::keyPressEvent(QKeyEvent* e)
       statusBar()->showMessage(tr("view: overlay"));
       return;
    case Qt::Key_G:
-      session_->regenerate();
+      session_->regenerateAsync();
       return;
    default:
       QMainWindow::keyPressEvent(e);

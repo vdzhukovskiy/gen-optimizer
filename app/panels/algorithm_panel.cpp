@@ -7,7 +7,6 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -17,7 +16,6 @@ namespace
 {
 
 constexpr int    kSliderSteps        = 1000;
-constexpr int    kDebounceMs         = 200;
 
 int decimalsFor(double step)
 {
@@ -49,13 +47,10 @@ AlgorithmPanel::AlgorithmPanel(core::Session* session, QWidget* parent)
    rows_layout_->setContentsMargins(0, 0, 0, 0);
 
    reset_ = new QPushButton(tr("Reset params"));
+   generate_ = new QPushButton(tr("Generate"));
 
-   hint_ = new QLabel(tr("<i>Changes recompute automatically.</i>"));
+   hint_ = new QLabel(tr("<i>Click Generate or press G to apply changes.</i>"));
    hint_->setWordWrap(true);
-
-   debounce_ = new QTimer(this);
-   debounce_->setSingleShot(true);
-   debounce_->setInterval(kDebounceMs);
 
    auto* root = new QVBoxLayout(this);
    root->setContentsMargins(8, 8, 8, 8);
@@ -63,6 +58,7 @@ AlgorithmPanel::AlgorithmPanel(core::Session* session, QWidget* parent)
    root->addWidget(combo_);
    root->addWidget(rows_host_);
    root->addWidget(reset_);
+   root->addWidget(generate_);
    root->addWidget(hint_);
    root->addStretch(1);
 
@@ -70,13 +66,28 @@ AlgorithmPanel::AlgorithmPanel(core::Session* session, QWidget* parent)
            this, &AlgorithmPanel::onAlgorithmComboChanged);
    connect(reset_, &QPushButton::clicked,
            this, &AlgorithmPanel::onResetClicked);
-   connect(debounce_, &QTimer::timeout,
-           this, &AlgorithmPanel::onDebounceTimeout);
+   connect(generate_, &QPushButton::clicked,
+           this, &AlgorithmPanel::onGenerateClicked);
 
    connect(session_, &core::Session::algorithmChanged,
            this, &AlgorithmPanel::onSessionAlgorithmChanged);
    connect(session_, &core::Session::paramsChanged,
            this, &AlgorithmPanel::onSessionParamsChanged);
+
+   const auto updateControls = [this] {
+      const bool busy = session_->isGeneralizing();
+      combo_->setEnabled(!busy);
+      rows_host_->setEnabled(!busy);
+      reset_->setEnabled(!busy);
+      generate_->setEnabled(!busy && session_->state() == core::Session::State::Ready
+                            && !session_->data().layers.empty());
+      generate_->setText(busy ? tr("Generating...") : tr("Generate"));
+   };
+   connect(session_, &core::Session::generalizationStarted, this, updateControls);
+   connect(session_, &core::Session::generalizationFinished, this, updateControls);
+   connect(session_, &core::Session::stateChanged, this, updateControls);
+   connect(session_, &core::Session::dataChanged, this, updateControls);
+   updateControls();
 
    // Session уже мог установить алгоритм по умолчанию до нашего подключения.
    rebuildRows();
@@ -111,12 +122,11 @@ void AlgorithmPanel::onSessionParamsChanged()
 void AlgorithmPanel::onResetClicked()
 {
    session_->resetParams();
-   debounce_->start(kDebounceMs);
 }
 
-void AlgorithmPanel::onDebounceTimeout()
+void AlgorithmPanel::onGenerateClicked()
 {
-   session_->regenerate();
+   session_->regenerateAsync();
 }
 
 void AlgorithmPanel::rebuildRows()
@@ -203,7 +213,6 @@ void AlgorithmPanel::setRowValue(int row, double value, bool from_spin)
    updating_ = false;
 
    session_->setParam(spec.name, value);
-   debounce_->start(kDebounceMs);
 }
 
 void AlgorithmPanel::onSpinChanged(int row, double value)

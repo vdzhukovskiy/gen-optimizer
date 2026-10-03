@@ -13,12 +13,11 @@ class QComboBox;
 class QFormLayout;
 class QLabel;
 class QPushButton;
-class QTimer;
 namespace core { class Session; }
 
 // Панель выбора алгоритма и управления его параметрами.
 // Виджеты параметров генерируются из ParamSpecs — панель не знает о
-// конкретных алгоритмах. Изменения debounce-ятся перед regenerate().
+// конкретных алгоритмах. Пересчёт запускается только явно.
 class AlgorithmPanel : public QWidget
 {
    Q_OBJECT
@@ -31,7 +30,7 @@ private slots:
    void onSessionAlgorithmChanged(const QString& name);
    void onSessionParamsChanged();
    void onResetClicked();
-   void onDebounceTimeout();
+   void onGenerateClicked();
    void onSpinChanged(int row, double value);
    void onSliderChanged(int row, int pos);
 
@@ -55,8 +54,8 @@ private:
    QWidget*        rows_host_ = nullptr;
    QFormLayout*    rows_layout_ = nullptr;
    QPushButton*    reset_   = nullptr;
+   QPushButton*    generate_ = nullptr;
    QLabel*         hint_    = nullptr;
-   QTimer*         debounce_ = nullptr;
 
    std::vector<ParamRow> rows_;
    bool updating_ = false;   // защита от рекурсии при программной установке

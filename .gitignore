@@ -85,3 +85,5 @@ CMakeLists.txt.user*
 
 .clang-format
 .vscode/
+
+/AGENTS.md

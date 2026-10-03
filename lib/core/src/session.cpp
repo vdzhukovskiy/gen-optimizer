@@ -1,9 +1,10 @@
 #include "core/session.h"
 
 #include "geometry-importer/importer.h"
+#include "core/generalization_worker.h"
 
 #include <QCoreApplication>
-#include <QElapsedTimer>
+#include <QThread>
 
 #include <algorithm>
 #include <cmath>
@@ -15,8 +16,6 @@ namespace core
 
 namespace 
 {
-   constexpr std::size_t kHausdorffStride = 8;
-
    bool is_noise(const std::string& name)
    {
       static const std::vector<std::string> noise = {"bathymetry",         "graticules",
@@ -35,7 +34,14 @@ Session::Session(QObject* parent) : QObject(parent)
    setAlgorithm("douglas-peucker");
 }
 
-Session::~Session() = default;
+Session::~Session()
+{
+   if (generalization_thread_)
+   {
+      generalization_thread_->requestInterruption();
+      generalization_thread_->wait();
+   }
+}
 
 // ─── Загрузка данных ────────────────────────────────────────────────
 
@@ -44,7 +50,8 @@ void Session::loadPath(const QString& path, const QString& filter)
    setState(State::Loading);
    emit statusMessage(tr("loading %1...").arg(path));
 
-   data_ = MapData{};
+   ++input_revision_;
+   data_ = std::make_shared<MapData>();
    last_error_.clear();
    clearGeneralization();
 
@@ -108,34 +115,34 @@ void Session::loadPath(const QString& path, const QString& filter)
 
          if (!crs_checked)
          {
-            data_.reference_crs = info.crs;
+            data_->reference_crs = info.crs;
             crs_checked = true;
          }
-         else if (!data_.reference_crs.sameAs(info.crs))
+         else if (!data_->reference_crs.sameAs(info.crs))
          {
             crs_mismatch = true;
          }
 
-         if (!data_.has_bounds)
+         if (!data_->has_bounds)
          {
-            data_.union_bounds = info.bounds;
-            data_.has_bounds   = true;
+            data_->union_bounds = info.bounds;
+            data_->has_bounds   = true;
          }
          else
          {
-            data_.union_bounds.minX = std::min(data_.union_bounds.minX, info.bounds.minX);
-            data_.union_bounds.minY = std::min(data_.union_bounds.minY, info.bounds.minY);
-            data_.union_bounds.maxX = std::max(data_.union_bounds.maxX, info.bounds.maxX);
-            data_.union_bounds.maxY = std::max(data_.union_bounds.maxY, info.bounds.maxY);
+            data_->union_bounds.minX = std::min(data_->union_bounds.minX, info.bounds.minX);
+            data_->union_bounds.minY = std::min(data_->union_bounds.minY, info.bounds.minY);
+            data_->union_bounds.maxX = std::max(data_->union_bounds.maxX, info.bounds.maxX);
+            data_->union_bounds.maxY = std::max(data_->union_bounds.maxY, info.bounds.maxY);
          }
 
          Layer layer;
          layer.info     = std::move(info);
          layer.features = std::move(features);
-         data_.layers.push_back(std::move(layer));
+         data_->layers.push_back(std::move(layer));
       }
 
-      if (data_.layers.empty())
+      if (data_->layers.empty())
       {
          setState(State::Ready);
          emit statusMessage(tr("nothing loaded"));
@@ -143,7 +150,7 @@ void Session::loadPath(const QString& path, const QString& filter)
          return;
       }
 
-      const auto& first_crs = data_.reference_crs;
+      const auto& first_crs = data_->reference_crs;
       const QString units = first_crs.units.empty()
                                 ? tr("unknown units")
                                 : QString::fromStdString(first_crs.units);
@@ -152,7 +159,7 @@ void Session::loadPath(const QString& path, const QString& filter)
                                     : (first_crs.isValid() ? tr("custom") : tr("no CRS"));
 
       QString msg = tr("loaded %1 layer(s), skipped %2, CRS %3 (%4)")
-                        .arg(data_.layers.size())
+                        .arg(data_->layers.size())
                         .arg(skipped)
                         .arg(crs_label, units);
       if (crs_mismatch)
@@ -175,7 +182,9 @@ void Session::loadPath(const QString& path, const QString& filter)
 
 void Session::setAlgorithm(std::string_view name)
 {
-   algorithm_ = gen::makeAlgorithm(name);
+   auto algorithm = gen::makeAlgorithm(name);
+   ++input_revision_;
+   algorithm_ = std::move(algorithm);
    specs_     = algorithm_->paramSpecs();
    params_.clear();
    for (const auto& s : specs_)
@@ -195,72 +204,71 @@ void Session::setParam(std::string_view name, double value)
       return;   // неизвестный параметр — игнорируем тихо
    if (it->second == value)
       return;
+   ++input_revision_;
    it->second = value;
    emit paramsChanged();
 }
 
 void Session::resetParams()
 {
+   ++input_revision_;
    for (const auto& s : specs_)
       params_[s.name] = defaultParamValue(s);
    emit paramsChanged();
 }
 
-void Session::regenerate()
+void Session::regenerateAsync()
 {
-   if (!algorithm_ || data_.layers.empty())
+   if (isGeneralizing())
    {
-      emit generalizationDone();
+      emit statusMessage(tr("generalization is already running"));
+      return;
+   }
+   if (!algorithm_ || state_ != State::Ready || data_->layers.empty())
+   {
+      emit statusMessage(tr("no data to generalize"));
       return;
    }
 
-   simplified_layers_.clear();
-   layer_metrics_.clear();
-   simplified_layers_.resize(data_.layers.size());
-   layer_metrics_.resize(data_.layers.size());
+   const auto revision = input_revision_;
+   auto result = std::make_shared<GeneralizationResult>();
+   GeneralizationWorker worker(data_, currentAlgorithm(), params_);
+   auto* thread = QThread::create([worker = std::move(worker), result] {
+      *result = worker.run(*QThread::currentThread());
+   });
+   thread->setParent(this);
+   generalization_thread_ = thread;
 
-   const int total = static_cast<int>(data_.layers.size());
+   // finished доставляется в GUI-поток; результат читается только после расчёта.
+   // Передаём через замыкание, поэтому пользовательские метатипы Qt не нужны.
+   connect(thread, &QThread::finished, this, [this, thread, result, revision] {
+      thread->wait();
+      generalization_thread_ = nullptr;
+      thread->deleteLater();
 
-   for (int li = 0; li < total; ++li)
-   {
-      const auto& original = data_.layers[li].features;
-      auto&       result   = simplified_layers_[li];
-      result.reserve(original.size());
-
-      QElapsedTimer timer;
-      timer.start();
-
-      for (const auto& f : original)
+      if (!result->error.isEmpty())
       {
-         gi::Feature out;
-         out.id         = f.id;
-         out.attributes = f.attributes;
-         try
-         {
-            out.geometry = algorithm_->simplify(f.geometry, params_);
-         }
-         catch (const std::exception&)
-         {
-            // Если алгоритм упал на конкретной фиче — оставляем оригинал.
-            // Метрика всё равно покажет, что улучшения нет.
-            out.geometry = f.geometry;
-         }
-         result.push_back(std::move(out));
+         last_error_ = result->error;
+         emit errorOccurred(last_error_);
+         emit statusMessage(tr("generalization failed: %1").arg(last_error_));
       }
+      else if (result->interrupted || revision != input_revision_)
+      {
+         emit statusMessage(tr("generalization result discarded: inputs changed"));
+      }
+      else
+      {
+         simplified_layers_ = std::move(result->layers);
+         layer_metrics_ = std::move(result->metrics);
+         emit statusMessage(tr("generalization complete"));
+         emit generalizationDone();
+      }
+      emit generalizationFinished();
+   }, Qt::QueuedConnection);
 
-      const double elapsed_ms = timer.nsecsElapsed() / 1e6;
-      layer_metrics_[li] = metrics::evaluate(original, result, elapsed_ms,
-                                             kHausdorffStride);
-
-      emit statusMessage(tr("generalized [%1/%2] %3 — compression %4, H %5")
-                             .arg(li + 1).arg(total)
-                             .arg(QString::fromStdString(data_.layers[li].info.name))
-                             .arg(layer_metrics_[li].compression_ratio, 0, 'f', 3)
-                             .arg(layer_metrics_[li].hausdorff, 0, 'g', 4));
-      QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-   }
-
-   emit generalizationDone();
+   thread->start();
+   emit generalizationStarted();
+   emit statusMessage(tr("generalizing..."));
 }
 
 std::string Session::currentAlgorithm() const
