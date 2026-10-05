@@ -13,6 +13,7 @@ class QComboBox;
 class QFormLayout;
 class QLabel;
 class QPushButton;
+class QProgressBar;
 namespace core { class Session; }
 
 // Панель выбора алгоритма и управления его параметрами.
@@ -31,6 +32,7 @@ private slots:
    void onSessionParamsChanged();
    void onResetClicked();
    void onGenerateClicked();
+   void updateControls();
    void onSpinChanged(int row, double value);
    void onSliderChanged(int row, int pos);
 
@@ -55,6 +57,9 @@ private:
    QFormLayout*    rows_layout_ = nullptr;
    QPushButton*    reset_   = nullptr;
    QPushButton*    generate_ = nullptr;
+   QPushButton *cancel_ = nullptr;
+   QProgressBar *progress_ = nullptr;
+   QLabel *progress_label_ = nullptr;
    QLabel*         hint_    = nullptr;
 
    std::vector<ParamRow> rows_;

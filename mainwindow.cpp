@@ -12,6 +12,9 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QVBoxLayout>
+#include <QWheelEvent>
+#include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -34,6 +37,10 @@ MainWindow::MainWindow(core::Session* session, QWidget* parent)
            this,     &MainWindow::onGeneralizationDone);
    connect(session_, &core::Session::statusMessage,
            this,     &MainWindow::onStatusMessage);
+   connect(session_, &core::Session::paramsChanged, this,
+           [this] { status_panel_->updateFrom(*session_); });
+   connect(session_, &core::Session::algorithmChanged, this,
+           [this] { status_panel_->updateFrom(*session_); });
 
    data_panel_->updateFrom(*session_);
    status_panel_->updateFrom(*session_);
@@ -49,6 +56,8 @@ void MainWindow::buildUi()
    view_->setDragMode(QGraphicsView::ScrollHandDrag);
    view_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
    view_->setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
+   view_->viewport()->installEventFilter(this);
+   view_->setToolTip(tr("Mouse wheel: zoom. Drag with left mouse button: move map."));
 
    scene_ = new QGraphicsScene(this);
    scene_->setBackgroundBrush(Qt::white);
@@ -81,6 +90,7 @@ void MainWindow::onDataChanged()
 {
    rebuildScene();
    data_panel_->updateFrom(*session_);
+   status_panel_->updateFrom(*session_);
 }
 
 void MainWindow::onGeneralizationDone()
@@ -130,14 +140,42 @@ void MainWindow::rebuildScene()
       layer_items_.push_back(pair);
    }
 
-   scene_->setSceneRect(scene_->itemsBoundingRect().adjusted(-20, -20, 20, 20));
+   const QRectF content = scene_->itemsBoundingRect().adjusted(-20, -20, 20, 20);
+   // Оставляем пространство для перетаскивания карты даже при исходном масштабе.
+   scene_->setSceneRect(content.adjusted(-content.width() * 100, -content.height() * 100,
+                                        content.width() * 100, content.height() * 100));
    applyViewMode();
 
    if (!fitted_)
    {
-      view_->fitInView(scene_->sceneRect(), Qt::KeepAspectRatio);
+      view_->fitInView(content, Qt::KeepAspectRatio);
       fitted_ = true;
    }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+   if (watched == view_->viewport() && event->type() == QEvent::Wheel)
+   {
+      auto* wheel = static_cast<QWheelEvent*>(event);
+      const double delta = !wheel->angleDelta().isNull()
+                              ? wheel->angleDelta().y() / 120.0
+                              : wheel->pixelDelta().y() / 120.0;
+      if (delta != 0.0 && !scene_->items().isEmpty())
+      {
+         const QPoint cursor = wheel->position().toPoint();
+         const QPointF before = view_->mapToScene(cursor);
+         const double current_scale = view_->transform().m11();
+         const double target_scale = std::clamp(current_scale * std::pow(1.2, delta), 0.01, 1000.0);
+         view_->setTransformationAnchor(QGraphicsView::NoAnchor);
+         view_->scale(target_scale / current_scale, target_scale / current_scale);
+         const QPointF after = view_->mapToScene(cursor);
+         view_->centerOn(view_->mapToScene(view_->viewport()->rect().center()) + before - after);
+      }
+      wheel->accept();
+      return true;
+   }
+   return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::applyViewMode()

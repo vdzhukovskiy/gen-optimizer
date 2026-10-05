@@ -1,17 +1,18 @@
 #pragma once
 
-#include <QObject>
-#include <QString>
-
-#include <memory>
-#include <string>
-#include <string_view>
-#include <vector>
-#include <cstdint>
-
+#include "core/generalization_worker.h"
 #include "core/map_data.h"
 #include "core/metrics.h"
 #include "generalization/algorithm.h"
+
+#include <QObject>
+#include <QString>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 class QThread;
 
@@ -50,15 +51,38 @@ public:
    void resetParams();
 
    // Прогоняет текущий алгоритм с текущими параметрами по всем слоям
-   // и пересчитывает метрики в фоне. Повторный запуск во время работы игнорируется.
+   // и пересчитывает метрики в фоне. Повторный запуск отменяет текущую задачу
+   // и ставит снимок новых настроек в очередь (одна последняя задача).
    void regenerateAsync();
+   void cancelGeneralization();
    bool isGeneralizing() const noexcept { return generalization_thread_ != nullptr; }
+   bool isCancelling() const noexcept
+   {
+      return cancellation_requested_;
+   }
+   bool hasPendingRestart() const noexcept
+   {
+      return pending_request_.has_value();
+   }
+   const GeneralizationProgress &generalizationProgress() const noexcept
+   {
+      return progress_;
+   }
 
    std::string                    currentAlgorithm() const;
    const gen::ParamSet&           currentParams()    const noexcept;
    const gen::ParamSpecs&         currentSpecs()     const noexcept;
 
    bool hasGeneralization() const noexcept;
+   const std::string &resultAlgorithm() const noexcept
+   {
+      return result_algorithm_;
+   }
+   const gen::ParamSet &resultParams() const noexcept
+   {
+      return result_params_;
+   }
+   bool resultMatchesSettings() const;
 
    // Упрощённые фичи слоя. Пустой вектор, если пересчёт не выполнялся.
    const std::vector<gi::Feature>& simplified(int layer_index) const;
@@ -72,28 +96,46 @@ signals:
    void algorithmChanged(const QString& name);
    void paramsChanged();
    void generalizationStarted();
+   void generalizationCancellationRequested();
+   void generalizationCancelled();
+   void generalizationProgressChanged(qint64 completed, qint64 total, const QString &layer,
+                                      const QString &phase, qint64 layer_completed,
+                                      qint64 layer_total);
    void generalizationFinished();
    void generalizationDone();
    void errorOccurred(const QString& message);
    void statusMessage(const QString& message);
 
 private:
-   void setState(State s);
-   void clearGeneralization();
-   static double defaultParamValue(const gen::ParamSpec& spec);
+  struct GeneralizationRequest
+  {
+     std::shared_ptr<const MapData> data;
+     std::string algorithm;
+     gen::ParamSet params;
+  };
 
-   State   state_ = State::Idle;
-   std::shared_ptr<MapData> data_ = std::make_shared<MapData>();
-   QString last_error_;
-   QThread* generalization_thread_ = nullptr;
-   std::uint64_t input_revision_ = 0;
+  void startGeneralization(GeneralizationRequest request);
+  void setState(State s);
+  void clearGeneralization();
+  static double defaultParamValue(const gen::ParamSpec &spec);
 
-   std::unique_ptr<gen::GeneralizationAlgorithm> algorithm_;
-   gen::ParamSet                                 params_;
-   gen::ParamSpecs                               specs_;
+  State state_ = State::Idle;
+  std::shared_ptr<MapData> data_ = std::make_shared<MapData>();
+  QString last_error_;
+  QThread *generalization_thread_ = nullptr;
+  std::uint64_t job_id_ = 0;
+  bool cancellation_requested_ = false;
+  std::optional<GeneralizationRequest> pending_request_;
+  GeneralizationProgress progress_;
+  std::string result_algorithm_;
+  gen::ParamSet result_params_;
 
-   std::vector<std::vector<gi::Feature>>     simplified_layers_;
-   std::vector<metrics::SimplificationMetrics> layer_metrics_;
+  std::unique_ptr<gen::GeneralizationAlgorithm> algorithm_;
+  gen::ParamSet params_;
+  gen::ParamSpecs specs_;
+
+  std::vector<std::vector<gi::Feature>> simplified_layers_;
+  std::vector<metrics::SimplificationMetrics> layer_metrics_;
 };
 
 } // namespace core

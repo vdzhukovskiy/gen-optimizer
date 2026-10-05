@@ -1,10 +1,12 @@
 #pragma once
 
-#include <cstddef>
-#include <vector>
-
+#include "generalization/cancellation.h"
 #include "geometry-importer/feature.h"
 #include "geometry-importer/geometry.h"
+
+#include <cstddef>
+#include <functional>
+#include <vector>
 
 namespace core::metrics
 {
@@ -45,21 +47,22 @@ bool isDegenerate(const gi::Geometry& g);
 // Расстояние Хаусдорфа между двумя ломаными, с прореживанием.
 // stride = 1 → каждая вершина, stride = 8 → каждая восьмая.
 // Симметричная версия: max(h(A,B), h(B,A)).
-double hausdorff(const gi::LineString& a, const gi::LineString& b,
-                 std::size_t stride = 8);
+double hausdorff(const gi::LineString &a, const gi::LineString &b, std::size_t stride = 8,
+                 const gen::CancellationCheck &cancelled = {});
 
 // Среднее отклонение вершин a от ближайших сегментов b (и наоборот),
 // усреднённое по обеим сторонам. Тоже с прореживанием.
-double averageDeviation(const gi::LineString& a, const gi::LineString& b,
-                        std::size_t stride = 8);
+double averageDeviation(const gi::LineString &a, const gi::LineString &b, std::size_t stride = 8,
+                        const gen::CancellationCheck &cancelled = {});
 
 // Полная оценка. Ожидает, что original и simplified имеют одинаковое число
 // фич и что фичи соответствуют друг другу по индексу (алгоритмы
 // не удаляют фичи, только вершины).
+// Отмена бросает gen::Cancelled; progress получает число оценённых фич слоя.
 // elapsed_ms — передаётся снаружи (замер вокруг simplify()).
-SimplificationMetrics evaluate(const std::vector<gi::Feature>& original,
-                               const std::vector<gi::Feature>& simplified,
-                               double elapsed_ms = 0.0,
-                               std::size_t stride = 8);
+SimplificationMetrics evaluate(const std::vector<gi::Feature> &original,
+                               const std::vector<gi::Feature> &simplified, double elapsed_ms = 0.0,
+                               std::size_t stride = 8, const gen::CancellationCheck &cancelled = {},
+                               const std::function<void(std::size_t)> &progress = {});
 
 } // namespace core::metrics

@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <queue>
 #include <vector>
 
@@ -34,9 +35,10 @@ double triangleArea(const gi::Point& a, const gi::Point& b, const gi::Point& c)
 
 } // namespace
 
-gi::LineString VisvalingamWhyatt::simplifyLine(const gi::LineString& line,
-                                               const ParamSet& params) const
+gi::LineString VisvalingamWhyatt::simplifyLine(const gi::LineString &line, const ParamSet &params,
+                                               const CancellationCheck &cancelled) const
 {
+   checkCancelled(cancelled);
    const double area_thresh = detail::requireParam(params, "area_threshold");
    const std::size_t n = line.size();
    if (n <= 2)
@@ -45,7 +47,13 @@ gi::LineString VisvalingamWhyatt::simplifyLine(const gi::LineString& line,
    std::vector<bool>        removed(n, false);
    std::vector<double>      area(n, 0.0);
    std::vector<std::size_t> prev(n), next(n);
-   for (std::size_t i = 0; i < n; ++i) { prev[i] = i - 1; next[i] = i + 1; }
+   for (std::size_t i = 0; i < n; ++i)
+   {
+      if ((i & 255) == 0)
+         checkCancelled(cancelled);
+      prev[i] = i - 1;
+      next[i] = i + 1;
+   }
    prev[0] = 0;
    next[n - 1] = n - 1;   // sentinels: endpoints never removed
 
@@ -58,12 +66,15 @@ gi::LineString VisvalingamWhyatt::simplifyLine(const gi::LineString& line,
    std::priority_queue<HeapEntry, std::vector<HeapEntry>, MinArea> pq;
    for (std::size_t i = 1; i + 1 < n; ++i)
    {
+      if ((i & 255) == 0)
+         checkCancelled(cancelled);
       area[i] = computeArea(i);
       pq.push({area[i], i});
    }
 
    while (!pq.empty())
    {
+      checkCancelled(cancelled);
       const HeapEntry top = pq.top();
       pq.pop();
 
@@ -95,7 +106,11 @@ gi::LineString VisvalingamWhyatt::simplifyLine(const gi::LineString& line,
    gi::LineString out;
    out.reserve(n);
    for (std::size_t i = 0; i < n; ++i)
+   {
+      if ((i & 255) == 0)
+         checkCancelled(cancelled);
       if (!removed[i]) out.push_back(line[i]);
+   }
    return out;
 }
 

@@ -1,15 +1,15 @@
 #include "core/session.h"
 
-#include "geometry-importer/importer.h"
 #include "core/generalization_worker.h"
+#include "geometry-importer/importer.h"
 
 #include <QCoreApplication>
 #include <QThread>
-
 #include <algorithm>
 #include <cmath>
 #include <exception>
 #include <stdexcept>
+#include <utility>
 
 namespace core
 {
@@ -47,10 +47,10 @@ Session::~Session()
 
 void Session::loadPath(const QString& path, const QString& filter)
 {
+   cancelGeneralization();
    setState(State::Loading);
    emit statusMessage(tr("loading %1...").arg(path));
 
-   ++input_revision_;
    data_ = std::make_shared<MapData>();
    last_error_.clear();
    clearGeneralization();
@@ -183,14 +183,11 @@ void Session::loadPath(const QString& path, const QString& filter)
 void Session::setAlgorithm(std::string_view name)
 {
    auto algorithm = gen::makeAlgorithm(name);
-   ++input_revision_;
    algorithm_ = std::move(algorithm);
    specs_     = algorithm_->paramSpecs();
    params_.clear();
    for (const auto& s : specs_)
       params_[s.name] = defaultParamValue(s);
-
-   clearGeneralization();
 
    emit algorithmChanged(QString::fromStdString(std::string(name)));
    emit paramsChanged();
@@ -204,14 +201,12 @@ void Session::setParam(std::string_view name, double value)
       return;   // неизвестный параметр — игнорируем тихо
    if (it->second == value)
       return;
-   ++input_revision_;
    it->second = value;
    emit paramsChanged();
 }
 
 void Session::resetParams()
 {
-   ++input_revision_;
    for (const auto& s : specs_)
       params_[s.name] = defaultParamValue(s);
    emit paramsChanged();
@@ -219,56 +214,128 @@ void Session::resetParams()
 
 void Session::regenerateAsync()
 {
-   if (isGeneralizing())
-   {
-      emit statusMessage(tr("generalization is already running"));
-      return;
-   }
    if (!algorithm_ || state_ != State::Ready || data_->layers.empty())
    {
       emit statusMessage(tr("no data to generalize"));
       return;
    }
 
-   const auto revision = input_revision_;
+   GeneralizationRequest request{data_, currentAlgorithm(), params_};
+   if (isGeneralizing())
+   {
+      pending_request_ = std::move(request);
+      cancellation_requested_ = true;
+      generalization_thread_->requestInterruption();
+      emit generalizationCancellationRequested();
+      emit statusMessage(tr("cancelling current calculation; new settings queued"));
+      return;
+   }
+   startGeneralization(std::move(request));
+}
+
+void Session::cancelGeneralization()
+{
+   pending_request_.reset();
+   if (!isGeneralizing())
+      return;
+   cancellation_requested_ = true;
+   generalization_thread_->requestInterruption();
+   emit generalizationCancellationRequested();
+   emit statusMessage(tr("cancelling generalization..."));
+}
+
+void Session::startGeneralization(GeneralizationRequest request)
+{
+   const auto job_id = ++job_id_;
    auto result = std::make_shared<GeneralizationResult>();
-   GeneralizationWorker worker(data_, currentAlgorithm(), params_);
-   auto* thread = QThread::create([worker = std::move(worker), result] {
-      *result = worker.run(*QThread::currentThread());
-   });
+   GeneralizationWorker worker(request.data, request.algorithm, request.params);
+   progress_ = {};
+   for (const auto &layer : request.data->layers)
+      progress_.total += 2 * static_cast<qint64>(layer.features.size());
+   cancellation_requested_ = false;
+   auto *thread = QThread::create(
+      [this, worker = std::move(worker), result, job_id]
+      {
+         *result =
+            worker.run(*QThread::currentThread(),
+                       [this, job_id](const GeneralizationProgress &progress)
+                       {
+                          // Только замыкание передаётся в GUI-поток: дополнительные метатипы не
+                          // нужны.
+                          QMetaObject::invokeMethod(
+                             this,
+                             [this, job_id, progress]
+                             {
+                                if (job_id != job_id_ || !isGeneralizing() || isCancelling())
+                                   return;
+                                progress_ = progress;
+                                emit generalizationProgressChanged(
+                                   progress.completed, progress.total, progress.layer,
+                                   progress.phase, progress.layer_completed, progress.layer_total);
+                             },
+                             Qt::QueuedConnection);
+                       });
+      });
    thread->setParent(this);
    generalization_thread_ = thread;
 
-   // finished доставляется в GUI-поток; результат читается только после расчёта.
-   // Передаём через замыкание, поэтому пользовательские метатипы Qt не нужны.
-   connect(thread, &QThread::finished, this, [this, thread, result, revision] {
-      thread->wait();
-      generalization_thread_ = nullptr;
-      thread->deleteLater();
+   connect(
+      thread, &QThread::finished, this,
+      [this, thread, result, request = std::move(request)]
+      {
+         thread->wait();
+         const bool cancelled = cancellation_requested_ || result->interrupted;
+         generalization_thread_ = nullptr;
+         cancellation_requested_ = false;
+         thread->deleteLater();
 
-      if (!result->error.isEmpty())
-      {
-         last_error_ = result->error;
-         emit errorOccurred(last_error_);
-         emit statusMessage(tr("generalization failed: %1").arg(last_error_));
-      }
-      else if (result->interrupted || revision != input_revision_)
-      {
-         emit statusMessage(tr("generalization result discarded: inputs changed"));
-      }
-      else
-      {
-         simplified_layers_ = std::move(result->layers);
-         layer_metrics_ = std::move(result->metrics);
-         emit statusMessage(tr("generalization complete"));
-         emit generalizationDone();
-      }
-      emit generalizationFinished();
-   }, Qt::QueuedConnection);
+         if (cancelled)
+         {
+            emit statusMessage(tr("generalization cancelled"));
+            emit generalizationCancelled();
+         }
+         else if (!result->error.isEmpty())
+         {
+            last_error_ = result->error;
+            emit errorOccurred(last_error_);
+            emit statusMessage(tr("generalization failed: %1").arg(last_error_));
+         }
+         else if (request.data != data_)
+         {
+            emit statusMessage(tr("generalization result discarded: data changed"));
+         }
+         else
+         {
+            simplified_layers_ = std::move(result->layers);
+            layer_metrics_ = std::move(result->metrics);
+            result_algorithm_ = request.algorithm;
+            result_params_ = request.params;
+            last_error_.clear();
+            progress_.completed = progress_.total;
+            emit statusMessage(tr("generalization complete"));
+            emit generalizationDone();
+         }
+         emit generalizationFinished();
+
+         if (pending_request_ && !isGeneralizing())
+         {
+            auto next = std::move(*pending_request_);
+            pending_request_.reset();
+            if (next.data == data_ && state_ == State::Ready)
+               startGeneralization(std::move(next));
+         }
+      },
+      Qt::QueuedConnection);
 
    thread->start();
    emit generalizationStarted();
    emit statusMessage(tr("generalizing..."));
+}
+
+bool Session::resultMatchesSettings() const
+{
+   return hasGeneralization() && result_algorithm_ == currentAlgorithm() &&
+          result_params_ == params_;
 }
 
 std::string Session::currentAlgorithm() const
@@ -316,6 +383,8 @@ void Session::clearGeneralization()
 {
    simplified_layers_.clear();
    layer_metrics_.clear();
+   result_algorithm_.clear();
+   result_params_.clear();
 }
 
 double Session::defaultParamValue(const gen::ParamSpec& spec)

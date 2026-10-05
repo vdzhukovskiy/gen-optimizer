@@ -1,10 +1,12 @@
 #include "app/panels/status_panel.h"
+
 #include "core/session.h"
 
 #include <QHeaderView>
 #include <QLabel>
 #include <QTableWidget>
 #include <QVBoxLayout>
+#include <algorithm>
 
 StatusPanel::StatusPanel(QWidget* parent) : QWidget(parent)
 {
@@ -74,11 +76,19 @@ void StatusPanel::updateFrom(const core::Session& session)
    }
 
    const double total_ratio = (sum_orig > 0.0) ? sum_res / sum_orig : 1.0;
-   summary_->setText(
-       tr("Total: %1 → %2 vertices (ratio %3), max H %4, time %5 ms")
-           .arg(static_cast<qulonglong>(sum_orig))
-           .arg(static_cast<qulonglong>(sum_res))
-           .arg(total_ratio, 0, 'f', 3)
-           .arg(max_h, 0, 'g', 3)
-           .arg(sum_time, 0, 'f', 1));
+   QString settings = QString::fromStdString(session.resultAlgorithm());
+   std::vector<std::pair<std::string, double>> params(session.resultParams().begin(),
+                                                      session.resultParams().end());
+   std::sort(params.begin(), params.end());
+   for (const auto &[name, value] : params)
+      settings += QStringLiteral(" %1=%2").arg(QString::fromStdString(name)).arg(value, 0, 'g', 6);
+   if (!session.resultMatchesSettings())
+      settings += tr(" (settings changed; showing previous result)");
+   summary_->setText(settings + QStringLiteral("\n") +
+                     tr("Total: %1 → %2 vertices (ratio %3), max H %4, time %5 ms")
+                        .arg(static_cast<qulonglong>(sum_orig))
+                        .arg(static_cast<qulonglong>(sum_res))
+                        .arg(total_ratio, 0, 'f', 3)
+                        .arg(max_h, 0, 'g', 3)
+                        .arg(sum_time, 0, 'f', 1));
 }

@@ -1,0 +1,159 @@
+# Контекст проекта gen-optimizer
+
+## Что это
+
+Магистерская ВКР по теме **«Исследование и оптимизация алгоритмов картографической генерализации в геоинформационных системах на основе имитационного моделирования»**. Идея: симуляционная среда на C++/Qt для сравнительного анализа алгоритмов генерализации с возможностью ручного управления параметрами и автоматической оптимизации.
+
+Слово «оптимизация» в названии — временное. По ходу обсуждения решили: либо оставить как есть, если реализуется настоящая процедура оптимизации (формализованная целевая функция + метод поиска), либо переформулировать в «сравнительный анализ» / «параметрическая оптимизация». Окончательное решение откладывается до реализации оптимизатора.
+
+## Стек и архитектура
+
+- **C++17**, **Qt 6** (Widgets + Core + Gui), **CMake**, **GDAL/OGR**.
+- Кроссплатформенность: сборка идёт на Linux (Qt Creator + VSCode).
+- Данные: **Natural Earth 10m physical** (шейпфайлы WGS84, EPSG:4326). Файлы: `~/work/data/10m_physical/`.
+
+Структура проекта:
+
+```
+gen-optimizer/
+├── main.cpp, mainwindow.{h,cpp}
+├── app/panels/                    ← UI-панели (data, algorithm, status)
+└── lib/
+    ├── geometry-importer/         ← GDAL → variant-геометрия
+    ├── map-renderer/              ← QGraphicsItem + трансформация world→scene
+    ├── generalization/            ← алгоритмы упрощения (DP, VW, Li-Openshaw)
+    └── core/                      ← Session, метрики, worker
+```
+
+**Принципиальное разделение:**
+- `geometry-importer`, `generalization`, `core/metrics` — **без Qt Widgets**. Максимум Qt Core для `QObject`/сигналов.
+- `map-renderer` — зависит от Qt Gui (`QGraphicsItem`, `QPainterPath`).
+- `MainWindow` и панели — только UI, никакой логики работы с данными.
+
+## Реализовано
+
+### geometry-importer
+- `gi::Geometry` — `std::variant<Point, LineString, Polygon, MultiPoint, MultiLine, MultiPolygon>`.
+- `gi::Feature` — `id`, `geometry`, `attributes` (пары строк).
+- `gi::Crs` — EPSG, `is_geographic`, `units`, `name`, `wkt`, метод `sameAs`.
+- `gi::LayerInfo` — `name`, `bounds`, `crs`, `feature_count`.
+- `gi::Importer` — RAII-обёртка над GDAL dataset. Принимает файл **или директорию** (директория = один dataset, каждый `.shp` = отдельный слой). Вспомогательные `.shx/.dbf/.prj/.cpg` читаются GDAL автоматически. Метод `layers()` возвращает метаданные всех слоёв, `readLayer(name)` — фичи слоя.
+- RAII для `OGRFeature`, `std::filesystem::path` → `std::string` для кроссплатформенности.
+- Антимеридиан **не обрабатывается** (осознанно — тема отдельной работы).
+- Проекционные преобразования **не делаются** (данные отдаются в исходной CRS).
+
+### map-renderer
+- `mr::MapTransform` — world→scene с Y-flip. `fit(bounds, viewport)` строит трансформацию.
+- `mr::LayerItem : QGraphicsItem` — хранит `std::vector<QPainterPath>`, строит один раз. Публичный API: `setFeatures`, `setTransform`, `setStyle`. Внутри — `prepareGeometryChange()` перед изменением bounds.
+- `mr::LayerStyle` — `color`, `pen_style`, `z_value`.
+- Косметический pen (`width 0`), антиалиасинг включён.
+
+### generalization
+- `gen::ParamSpec` — `name`, `description`, `min_value`, `max_value`, `step`, `logarithmic`.
+- `gen::ParamSet = std::unordered_map<std::string, double>`.
+- `gen::GeneralizationAlgorithm` — Strategy с `name()`, `paramSpecs()`, и protected `simplifyLine(LineString, ParamSet)`. Публичный `simplify(Geometry, ParamSet)` диспетчеризует по типу через `std::visit`.
+- Реализованы три алгоритма:
+  - **Douglas-Peucker**: параметр `epsilon` (лог-шкала, 0.001–1.0).
+  - **Visvalingam-Whyatt**: параметр `area_threshold` (лог-шкала). Реализация через heap с ленивым удалением, O(n log n).
+  - **Li-Openshaw** (упрощённый, min-distance вариант): параметр `window_size` (лог-шкала).
+- Гарантия сохранения первой и последней точки линии.
+- Обработка колец — через разбиение в самой удалённой от начала вершине (чтобы не иметь дела с вырожденным «first == last»).
+- `makeAlgorithm(name)` — фабрика по имени, `availableAlgorithms()` — список.
+- Все алгоритмы реализуют только `simplifyLine`, всё остальное — в базовом классе.
+
+**Важный нюанс:** у `LineString` и `LinearRing` в `geometry.h` **один и тот же underlying тип** (`std::vector<Point>`), поэтому перегрузки `operator()` для них недопустимы — компилятор ругается на redeclaration. Уже наступили один раз, в `VertexCounter`.
+
+### core
+- `core::MapData` — `layers` (с `LayerInfo` + `Feature`), `union_bounds`, `reference_crs`, `has_bounds`.
+- `core::Session : QObject` — единственный источник правды:
+  - `loadPath(path, filter)` — загрузка с опциональным фильтром по подстроке имени слоя.
+  - `setAlgorithm(name)` — сбрасывает параметры к дефолтным.
+  - `setParam(name, value)`, `resetParams()`.
+  - `regenerateAsync()` — **асинхронный** запуск генерализации в `QThread`. Если воркер уже работает — ставит `pending_restart_`, отменяет текущий, после завершения автоматически запускает новый.
+  - `cancelGeneralization()`.
+  - `isGeneralizing()`.
+  - `simplified(layer_index)`, `layerMetrics(layer_index)`.
+  - Сигналы: `dataChanged`, `algorithmChanged`, `paramsChanged`, `generalizationStarted`, `generalizationProgress(current, total)`, `generalizationDone`, `generalizationCancelled`, `errorOccurred`, `statusMessage`, `stateChanged`.
+  - Состояния: `Idle`, `Loading`, `Ready`, `Error`.
+  - Дефолтное значение параметра — **геометрическое среднее** для лог-шкалы, арифметическое для остальных (не min).
+- `core::GeneralizationWorker : QObject` — выполняется в отдельном `QThread`. Держит **ссылку** на `MapData` (Session гарантирует неизменность во время работы). Проверяет `std::atomic<bool> cancelled_` на каждой фиче. Сигналы `layerStarted`, `layerFinished(index, features, metrics)`, `finished`, `cancelled`, `failed`.
+- `core::metrics` — **чистые функции без Qt**:
+  - `countVertices(Geometry | vector<Feature>)`.
+  - `isDegenerate(Geometry)` — для LineString < 2 вершин, для Polygon — пустой или вырожденный exterior ring.
+  - `hausdorff(a, b, stride=8)` — симметричный, с прореживанием.
+  - `averageDeviation(a, b, stride=8)`.
+  - `evaluate(original, simplified, elapsed_ms, stride)` — собирает `SimplificationMetrics`:
+    - `orig_vertices`, `result_vertices`, `orig_features`, `surviving_features`
+    - `compression_ratio = result / orig`
+    - `hausdorff`, `average_deviation`
+    - `elapsed_ms`
+  - **Не считаются**: self-intersections (O(n²), часы на глобальных данных), bend loss, area error, topological checks. Оставлены на будущее.
+
+### UI (MainWindow + панели)
+- `MainWindow` — `QSplitter`: слева `QGraphicsView`, справа три панели.
+- **Двухслойный рендеринг**: на каждый слой два `LayerItem` — оригинал (`kOriginalColor = Qt::black`, `z=0`) и генерализация (`kSimplifiedColor = QColor(255,0,255)` маджента, `z=1`).
+- Горячие клавиши: **O** — только оригинал, **S** — только генерализация, **A** — overlay (по умолчанию), **G** — `regenerateAsync()`.
+- Автозапуска генерализации **нет** — по требованию пользователя.
+- `DataPanel` — источник, CRS (EPSG + units), число слоёв, фич, вершин.
+- `AlgorithmPanel` — комбобокс алгоритмов + динамически генерируемые виджеты параметров (спинбокс + лог-слайдер) из `paramSpecs()`. Кнопки `Generate` и `Cancel`, `QProgressBar`. Debounce 200 мс на слайдерах → `regenerateAsync()`. Флаг `updating_` защищает от рекурсии при программной установке значений.
+- `StatusPanel` — сводка (total orig/result vertices, ratio, max H, total time) + таблица по слоям.
+- Панели **не знают про конкретные алгоритмы** — генерируются из спецификаций.
+
+### Метатипы Qt
+Из-за queued-сигналов воркера нужен `Q_DECLARE_METATYPE` для `std::vector<gi::Feature>` и `core::metrics::SimplificationMetrics`. Проблема: `moc` обрабатывает заголовки раньше, чем компилятор видит макрос, что даёт **«explicit specialization of 'QMetaTypeId<...>' after instantiation»**. Решение — вынести макросы в отдельный `core/metatypes.h`, подключать **первым** в `session.h` и `generalization_worker.h`. Также добавлен `Q_DECLARE_METATYPE(gi::Feature)` для поэлементного типа.
+
+## Что запланировано, но не сделано
+
+### Фаза 5 — оптимизатор
+- `core::Optimizer` — Strategy с `run(data, algorithm, specs, progress_callback)`, возвращает `OptResult { best_params, best_metrics, convergence, iterations }`.
+- Реализации: **GridSearch** (базовый), **Nelder-Mead** (2–4 параметра), **GeneticAlgorithm** (опционально, для многокритериальных задач).
+- `OptimizerWorker : QObject` по образцу `GeneralizationWorker`.
+- `OptimizerPanel` — кнопка Optimize/Stop, прогресс, кастомный виджет с графиком сходимости (best metric vs iteration). Без `QtCharts`.
+- Worker работает с **копией** данных, не с `Session::data_`, чтобы не было гонок.
+
+### Фаза 6 — полировка
+- Кнопка «Fit view» (сброс `fitted_`).
+- Отображение единиц измерения CRS в DataPanel (уже есть).
+- Экспорт результата в SHP (опционально).
+
+### Фаза 7 — материалы диссертации
+- 3 сценария эксперимента (линии / крупные полигоны / много мелких объектов).
+- Таблица результатов: `(dataset, algorithm, optimizer) → best_params, compression, hausdorff, time`.
+- Графики сходимости.
+
+## Обсуждалось, но отложено
+
+- **Сложные алгоритмы**: Wang-Müller (bend simplify, 2–3 параметра), Zhou-Jones (weighted effective area, 4 параметра), Simoo (топологически-согласованный), TPS, вейвлет-генерализация. Обсуждалось, что добавление одного shape-aware алгоритма с 3+ параметрами сделает оптимизацию нетривиальной и защищаемой. Решение отложено.
+- **Метрики рендера**: `path_build_ms`, `paint_ms` через offscreen `scene_->render` в `QImage` с медианой по N прогонам, для base и simplified отдельно. Отложено, но признано полезным для главы.
+- **Целевая функция оптимизации**: одномерная `minimize hausdorff subject to compression_ratio <= target`. Парето-фронт — опционально, «направление дальнейшей работы».
+- **Whitelist слоёв**: запуск без фильтра грузит все 50 слоёв → «месиво» (изобаты + гратикулы). Решение: либо whitelist из 4 слоёв (coastline, land, lakes, rivers) в `Session` по умолчанию, либо сценарии в JSON. Обсуждение не завершено.
+- **Тайлинг LayerItem** — для больших датасетов. Отложено.
+- **GPU-рендеринг** — третья идея изначального обсуждения. Отложено до основных фаз.
+
+## Известные баги и решения
+
+- **Чёрное окно на старте** — `QGraphicsScene` без `backgroundBrush` и `sceneRect`. Решено: белая кисть + стартовый rect + отложенный `loadPath` через `QTimer::singleShot(0, ...)`.
+- **Скроллбар внизу** — `fitInView` не вызывался после загрузки. Решено: вызов в конце `rebuildScene` под флагом `fitted_`.
+- **Redeclaration `operator()`** в `VertexCounter` — `LineString` и `LinearRing` один тип. Решено удалением перегрузки для кольца.
+- **`Q_DECLARE_METATYPE` after instantiation** — см. выше, `metatypes.h`.
+- **Первая версия Фазы 4 запускала генерализацию на старте** — убрано по требованию пользователя. Теперь только по кнопке.
+- **Синхронная генерализация блокировала UI** — заменено на асинхронную с `GeneralizationWorker` в `QThread`, прогресс-бар, кнопка Cancel.
+
+## Стиль работы
+
+- Пользователь присылает код, я комментирую и правлю.
+- При добавлении новых файлов — **всегда давать bash-скрипт** с `mkdir -p` и `touch` (не затирает существующие файлы).
+- Разбирать по делу, без воды. Ошибки — с указанием причины, а не только симптома.
+- Не блокировать UI: тяжёлые операции — в фоне.
+- Один шаг за раз: сначала данные/логика, потом UI. Не начинать следующую фазу, пока предыдущая не проверена на живых данных.
+- Используются только **осмысленные имена**: `hasGeneralization`, `compression_ratio`, `regenerateAsync`, `pending_restart_`. Никаких `doStuff`, `tmp`, `data2`.
+
+## Где сейчас точка
+
+Пользователь только что сообщил об ошибке `QMetaTypeId<...>` after instantiation и получил решение с `metatypes.h`. Ждём подтверждения, что проект собирается, и перехода к **Фазе 5 — оптимизатору**.
+
+Открытые вопросы, которые нужно решить перед Фазой 5:
+1. Оставляем ли название темы с «оптимизацией» как есть — зависит от того, будет ли реализован формальный оптимизатор с целевой функцией и методом поиска. Если да — название оправдано.
+2. Какой оптимизатор делать первым — GridSearch или Nelder-Mead. GridSearch проще и нагляднее для демонстрации, Nelder-Mead «научнее». Логично начать с GridSearch, добавить Nelder-Mead как второй.
+3. Что оптимизировать — параметры одного алгоритма, или выбор «алгоритм + параметры» из дискретного множества. Обсуждалось, что второй вариант содержательнее.
+4. Whitelist датасетов или сценарии JSON — это блокирует удобный прогон экспериментов.

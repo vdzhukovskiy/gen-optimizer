@@ -9,9 +9,11 @@ namespace gen::detail
 namespace
 {
 
-gi::LinearRing simplifyRing(const gi::LinearRing &ring, const LineSimplifier &f)
+gi::LinearRing simplifyRing(const gi::LinearRing &ring, const LineSimplifier &f,
+                            const CancellationCheck &cancelled)
 {
    // Кольцо замкнуто: front() == back(). Треугольник и меньше упрощать нечего.
+   checkCancelled(cancelled);
    if (ring.size() < 4)
       return ring;
 
@@ -22,6 +24,8 @@ gi::LinearRing simplifyRing(const gi::LinearRing &ring, const LineSimplifier &f)
    double best = -1.0;
    for (std::size_t i = 1; i + 1 < ring.size(); ++i)
    {
+      if ((i & 255) == 0)
+         checkCancelled(cancelled);
       const double dx = ring[i].x - first.x;
       const double dy = ring[i].y - first.y;
       const double d2 = dx * dx + dy * dy;
@@ -42,10 +46,18 @@ gi::LinearRing simplifyRing(const gi::LinearRing &ring, const LineSimplifier &f)
 
    gi::LinearRing out;
    out.reserve(a2.size() + b2.size());
-   for (const auto &p : a2)
-      out.push_back(p);
+   for (std::size_t i = 0; i < a2.size(); ++i)
+   {
+      if ((i & 255) == 0)
+         checkCancelled(cancelled);
+      out.push_back(a2[i]);
+   }
    for (std::size_t i = 1; i < b2.size(); ++i)
+   {
+      if ((i & 255) == 0)
+         checkCancelled(cancelled);
       out.push_back(b2[i]);
+   }
 
    if (!out.empty() && (out.front().x != out.back().x || out.front().y != out.back().y))
       out.push_back(out.front());
@@ -53,22 +65,25 @@ gi::LinearRing simplifyRing(const gi::LinearRing &ring, const LineSimplifier &f)
    return out;
 }
 
-gi::Polygon simplifyPolygon(const gi::Polygon &poly, const LineSimplifier &f)
+gi::Polygon simplifyPolygon(const gi::Polygon &poly, const LineSimplifier &f,
+                            const CancellationCheck &cancelled)
 {
    gi::Polygon out;
    out.reserve(poly.size());
    for (const auto &ring : poly)
-      out.push_back(simplifyRing(ring, f));
+      out.push_back(simplifyRing(ring, f, cancelled));
    return out;
 }
 
 } // namespace
 
-gi::Geometry simplifyGeometry(const gi::Geometry &g, const LineSimplifier &f)
+gi::Geometry simplifyGeometry(const gi::Geometry &g, const LineSimplifier &f,
+                              const CancellationCheck &cancelled)
 {
    return std::visit(
       [&](const auto &v) -> gi::Geometry
       {
+         checkCancelled(cancelled);
          using T = std::decay_t<decltype(v)>;
          if constexpr (std::is_same_v<T, gi::Point> || std::is_same_v<T, gi::MultiPoint>)
          {
@@ -83,19 +98,25 @@ gi::Geometry simplifyGeometry(const gi::Geometry &g, const LineSimplifier &f)
             gi::MultiLine out;
             out.lines.reserve(v.lines.size());
             for (const auto &l : v.lines)
+            {
+               checkCancelled(cancelled);
                out.lines.push_back(f(l));
+            }
             return out;
          }
          else if constexpr (std::is_same_v<T, gi::Polygon>)
          {
-            return simplifyPolygon(v, f);
+            return simplifyPolygon(v, f, cancelled);
          }
          else if constexpr (std::is_same_v<T, gi::MultiPolygon>)
          {
             gi::MultiPolygon out;
             out.polys.reserve(v.polys.size());
             for (const auto &p : v.polys)
-               out.polys.push_back(simplifyPolygon(p, f));
+            {
+               checkCancelled(cancelled);
+               out.polys.push_back(simplifyPolygon(p, f, cancelled));
+            }
             return out;
          }
       },

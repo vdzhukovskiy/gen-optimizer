@@ -15,8 +15,8 @@ public:
    ParamSpecs       paramSpecs() const override;
 
 protected:
-   gi::LineString simplifyLine(const gi::LineString& line,
-                               const ParamSet& params) const override;
+  gi::LineString simplifyLine(const gi::LineString &line, const ParamSet &params,
+                              const CancellationCheck &cancelled) const override;
 };
 
 } // namespace gen

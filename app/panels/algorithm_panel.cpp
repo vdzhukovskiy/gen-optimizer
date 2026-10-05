@@ -1,14 +1,14 @@
 #include "app/panels/algorithm_panel.h"
-#include "core/session.h"
 
+#include "core/session.h"
 #include "generalization/algorithm.h"
 
 #include <QComboBox>
 #include <QFormLayout>
 #include <QLabel>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QVBoxLayout>
-
 #include <algorithm>
 #include <cmath>
 
@@ -19,11 +19,10 @@ constexpr int    kSliderSteps        = 1000;
 
 int decimalsFor(double step)
 {
-   if (step <= 0.0) return 4;
-   if (step >= 1.0) return 1;
-   if (step >= 0.1) return 2;
-   if (step >= 0.01) return 3;
-   return 4;
+   if (!std::isfinite(step) || step <= 0.0)
+      return 4;
+   // Дополнительные знаки сохраняют промежуточные значения лог-слайдера.
+   return std::clamp(static_cast<int>(std::ceil(-std::log10(step))) + 2, 4, 15);
 }
 
 } // namespace
@@ -48,8 +47,17 @@ AlgorithmPanel::AlgorithmPanel(core::Session* session, QWidget* parent)
 
    reset_ = new QPushButton(tr("Reset params"));
    generate_ = new QPushButton(tr("Generate"));
+   generate_->setObjectName(QStringLiteral("generateButton"));
+   cancel_ = new QPushButton(tr("Cancel"));
+   cancel_->setObjectName(QStringLiteral("cancelButton"));
+   progress_ = new QProgressBar;
+   progress_->setRange(0, 1000);
+   progress_->setValue(0);
+   progress_label_ = new QLabel(tr("No calculation running"));
+   progress_label_->setWordWrap(true);
 
-   hint_ = new QLabel(tr("<i>Click Generate or press G to apply changes.</i>"));
+   hint_ = new QLabel(
+      tr("<i>Generate or G applies settings. During calculation, Restart queues a new run.</i>"));
    hint_->setWordWrap(true);
 
    auto* root = new QVBoxLayout(this);
@@ -59,6 +67,9 @@ AlgorithmPanel::AlgorithmPanel(core::Session* session, QWidget* parent)
    root->addWidget(rows_host_);
    root->addWidget(reset_);
    root->addWidget(generate_);
+   root->addWidget(cancel_);
+   root->addWidget(progress_);
+   root->addWidget(progress_label_);
    root->addWidget(hint_);
    root->addStretch(1);
 
@@ -68,30 +79,80 @@ AlgorithmPanel::AlgorithmPanel(core::Session* session, QWidget* parent)
            this, &AlgorithmPanel::onResetClicked);
    connect(generate_, &QPushButton::clicked,
            this, &AlgorithmPanel::onGenerateClicked);
+   connect(cancel_, &QPushButton::clicked, session_, &core::Session::cancelGeneralization);
 
    connect(session_, &core::Session::algorithmChanged,
            this, &AlgorithmPanel::onSessionAlgorithmChanged);
    connect(session_, &core::Session::paramsChanged,
            this, &AlgorithmPanel::onSessionParamsChanged);
 
-   const auto updateControls = [this] {
-      const bool busy = session_->isGeneralizing();
-      combo_->setEnabled(!busy);
-      rows_host_->setEnabled(!busy);
-      reset_->setEnabled(!busy);
-      generate_->setEnabled(!busy && session_->state() == core::Session::State::Ready
-                            && !session_->data().layers.empty());
-      generate_->setText(busy ? tr("Generating...") : tr("Generate"));
-   };
-   connect(session_, &core::Session::generalizationStarted, this, updateControls);
-   connect(session_, &core::Session::generalizationFinished, this, updateControls);
-   connect(session_, &core::Session::stateChanged, this, updateControls);
-   connect(session_, &core::Session::dataChanged, this, updateControls);
+   connect(session_, &core::Session::generalizationStarted, this,
+           [this]
+           {
+              progress_->setValue(0);
+              progress_label_->setText(tr("Starting calculation..."));
+              updateControls();
+           });
+   connect(session_, &core::Session::generalizationCancellationRequested, this,
+           [this]
+           {
+              progress_label_->setText(session_->hasPendingRestart()
+                                          ? tr("Cancelling... New calculation queued")
+                                          : tr("Cancelling..."));
+              updateControls();
+           });
+   connect(session_, &core::Session::generalizationProgressChanged, this,
+           [this](qint64 completed, qint64 total, const QString &layer, const QString &phase,
+                  qint64 layer_completed, qint64 layer_total)
+           {
+              progress_->setValue(total > 0 ? static_cast<int>(1000.0 * completed / total) : 0);
+              const QString phase_label = phase == QStringLiteral("Simplifying")
+                                             ? tr("Simplifying")
+                                             : tr("Evaluating metrics");
+              progress_label_->setText(tr("%1 — %2: %3 / %4 features")
+                                          .arg(layer, phase_label)
+                                          .arg(layer_completed)
+                                          .arg(layer_total));
+           });
+   connect(session_, &core::Session::generalizationDone, this,
+           [this]
+           {
+              progress_->setValue(1000);
+              progress_label_->setText(tr("Calculation complete"));
+           });
+   connect(session_, &core::Session::generalizationCancelled, this,
+           [this]
+           {
+              progress_label_->setText(session_->hasGeneralization()
+                                          ? tr("Cancelled — previous result retained")
+                                          : tr("Cancelled"));
+           });
+   connect(session_, &core::Session::errorOccurred, this, [this](const QString &message)
+           { progress_label_->setText(tr("Error: %1").arg(message)); });
+   connect(session_, &core::Session::generalizationFinished, this, &AlgorithmPanel::updateControls);
+   connect(session_, &core::Session::stateChanged, this, &AlgorithmPanel::updateControls);
+   connect(session_, &core::Session::dataChanged, this,
+           [this]
+           {
+              progress_->setValue(0);
+              progress_label_->setText(tr("No calculation running"));
+              updateControls();
+           });
    updateControls();
 
    // Session уже мог установить алгоритм по умолчанию до нашего подключения.
    rebuildRows();
    syncFromSession();
+}
+
+void AlgorithmPanel::updateControls()
+{
+   const bool ready = session_->state() == core::Session::State::Ready;
+   generate_->setEnabled(ready && !session_->data().layers.empty());
+   generate_->setText(session_->isGeneralizing() ? tr("Restart") : tr("Generate"));
+   cancel_->setEnabled(session_->isGeneralizing() &&
+                       (!session_->isCancelling() || session_->hasPendingRestart()));
+   cancel_->setText(session_->isCancelling() ? tr("Cancelling...") : tr("Cancel"));
 }
 
 void AlgorithmPanel::onAlgorithmComboChanged(int index)
@@ -133,16 +194,7 @@ void AlgorithmPanel::rebuildRows()
 {
    // Очищаем форму.
    while (rows_layout_->rowCount() > 0)
-   {
-      auto item = rows_layout_->takeAt(0);
-      if (item->layout())
-      {
-         while (item->layout()->count() > 0)
-            delete item->layout()->takeAt(0)->widget();
-         delete item->layout();
-      }
-      delete item;
-   }
+      rows_layout_->removeRow(0);
    rows_.clear();
 
    const auto& specs = session_->currentSpecs();
@@ -154,8 +206,8 @@ void AlgorithmPanel::rebuildRows()
       row.spec = spec;
 
       row.spin = new QDoubleSpinBox;
-      row.spin->setRange(spec.min_value, spec.max_value);
       row.spin->setDecimals(decimalsFor(spec.step));
+      row.spin->setRange(spec.min_value, spec.max_value);
       row.spin->setSingleStep(spec.step);
       row.spin->setKeyboardTracking(false);
 

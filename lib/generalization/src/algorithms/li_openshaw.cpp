@@ -7,9 +7,10 @@
 namespace gen
 {
 
-gi::LineString LiOpenshaw::simplifyLine(const gi::LineString& line,
-                                        const ParamSet& params) const
+gi::LineString LiOpenshaw::simplifyLine(const gi::LineString &line, const ParamSet &params,
+                                        const CancellationCheck &cancelled) const
 {
+   checkCancelled(cancelled);
    const double window = detail::requireParam(params, "window_size");
    if (line.size() <= 2 || window <= 0.0)
       return line;
@@ -22,6 +23,8 @@ gi::LineString LiOpenshaw::simplifyLine(const gi::LineString& line,
 
    for (std::size_t i = 1; i + 1 < line.size(); ++i)
    {
+      if ((i & 255) == 0)
+         checkCancelled(cancelled);
       const gi::Point& last = out.back();
       const double dx = line[i].x - last.x;
       const double dy = line[i].y - last.y;

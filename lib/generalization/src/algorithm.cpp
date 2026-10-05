@@ -10,13 +10,13 @@
 namespace gen
 {
 
-gi::Geometry GeneralizationAlgorithm::simplify(const gi::Geometry& input,
-                                               const ParamSet& params) const
+gi::Geometry GeneralizationAlgorithm::simplify(const gi::Geometry &input, const ParamSet &params,
+                                               const CancellationCheck &cancelled) const
 {
-   auto fn = [this, &params](const gi::LineString& ls) {
-      return simplifyLine(ls, params);
-   };
-   return detail::simplifyGeometry(input, fn);
+   checkCancelled(cancelled);
+   auto fn = [this, &params, &cancelled](const gi::LineString &ls)
+   { return simplifyLine(ls, params, cancelled); };
+   return detail::simplifyGeometry(input, fn, cancelled);
 }
 
 std::unique_ptr<GeneralizationAlgorithm> makeAlgorithm(std::string_view name)

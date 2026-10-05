@@ -1,4 +1,5 @@
 add_library(generalization STATIC
+    include/generalization/cancellation.h
     src/algorithm.cpp
     src/detail/geometry_ops.cpp
     src/detail/param_utils.cpp

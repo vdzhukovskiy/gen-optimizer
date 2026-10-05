@@ -1,12 +1,13 @@
 #pragma once
 
+#include "generalization/cancellation.h"
+#include "generalization/params.h"
+#include "geometry-importer/geometry.h"
+
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "generalization/params.h"
-#include "geometry-importer/geometry.h"
 
 namespace gen
 {
@@ -21,15 +22,16 @@ public:
 
    // Публичная точка входа: диспетчеризует по типу геометрии и вызывает
    // simplifyLine для линий и для каждого кольца полигонов.
-   gi::Geometry simplify(const gi::Geometry& input, const ParamSet& params) const;
+   gi::Geometry simplify(const gi::Geometry &input, const ParamSet &params,
+                         const CancellationCheck &cancelled = {}) const;
 
-protected:
+ protected:
    // Реализуется конкретными алгоритмами. Гарантии:
    //   - первый и последний элементы должны быть сохранены;
    //   - порядок точек сохраняется;
    //   - возвращаемая линия содержит не менее двух точек.
-   virtual gi::LineString simplifyLine(const gi::LineString& line,
-                                       const ParamSet& params) const = 0;
+   virtual gi::LineString simplifyLine(const gi::LineString &line, const ParamSet &params,
+                                       const CancellationCheck &cancelled) const = 0;
 };
 
 // Фабрика: имя → экземпляр. Бросает std::invalid_argument, если имени нет.

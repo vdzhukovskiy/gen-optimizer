@@ -110,8 +110,10 @@ double pointSegmentDistSq(const gi::Point& p, const gi::Point& a, const gi::Poin
    return px * px + py * py;
 }
 
-double minDistToLineSq(const gi::Point& p, const gi::LineString& line)
+double minDistToLineSq(const gi::Point &p, const gi::LineString &line,
+                       const gen::CancellationCheck &cancelled)
 {
+   gen::checkCancelled(cancelled);
    if (line.empty())
       return std::numeric_limits<double>::infinity();
    if (line.size() == 1)
@@ -123,6 +125,8 @@ double minDistToLineSq(const gi::Point& p, const gi::LineString& line)
    double best = std::numeric_limits<double>::infinity();
    for (std::size_t i = 0; i + 1 < line.size(); ++i)
    {
+      if ((i & 255) == 0)
+         gen::checkCancelled(cancelled);
       const double d2 = pointSegmentDistSq(p, line[i], line[i + 1]);
       if (d2 < best) best = d2;
    }
@@ -130,9 +134,10 @@ double minDistToLineSq(const gi::Point& p, const gi::LineString& line)
 }
 
 // Одностороннее расстояние Хаусдорфа: max по вершинам a от min до b.
-double directedHausdorff(const gi::LineString& a, const gi::LineString& b,
-                        std::size_t stride)
+double directedHausdorff(const gi::LineString &a, const gi::LineString &b, std::size_t stride,
+                         const gen::CancellationCheck &cancelled)
 {
+   gen::checkCancelled(cancelled);
    if (a.empty() || b.empty())
       return 0.0;
    if (stride == 0) stride = 1;
@@ -140,21 +145,22 @@ double directedHausdorff(const gi::LineString& a, const gi::LineString& b,
    double max_d2 = 0.0;
    for (std::size_t i = 0; i < a.size(); i += stride)
    {
-      const double d2 = minDistToLineSq(a[i], b);
+      const double d2 = minDistToLineSq(a[i], b, cancelled);
       if (d2 > max_d2) max_d2 = d2;
    }
    // Всегда включить последнюю вершину, иначе хвост может быть не проверен.
    if ((a.size() - 1) % stride != 0)
    {
-      const double d2 = minDistToLineSq(a.back(), b);
+      const double d2 = minDistToLineSq(a.back(), b, cancelled);
       if (d2 > max_d2) max_d2 = d2;
    }
    return std::sqrt(max_d2);
 }
 
-double directedAverage(const gi::LineString& a, const gi::LineString& b,
-                       std::size_t stride)
+double directedAverage(const gi::LineString &a, const gi::LineString &b, std::size_t stride,
+                       const gen::CancellationCheck &cancelled)
 {
+   gen::checkCancelled(cancelled);
    if (a.empty() || b.empty())
       return 0.0;
    if (stride == 0) stride = 1;
@@ -163,7 +169,7 @@ double directedAverage(const gi::LineString& a, const gi::LineString& b,
    std::size_t count = 0;
    for (std::size_t i = 0; i < a.size(); i += stride)
    {
-      sum += std::sqrt(minDistToLineSq(a[i], b));
+      sum += std::sqrt(minDistToLineSq(a[i], b, cancelled));
       ++count;
    }
    return count > 0 ? sum / static_cast<double>(count) : 0.0;
@@ -177,6 +183,7 @@ struct HausdorffVisitor
 {
    const gi::Geometry& other;
    std::size_t         stride;
+   const gen::CancellationCheck &cancelled;
    double&             max_out;
    double&             avg_acc;
    std::size_t&        avg_count;
@@ -189,9 +196,9 @@ struct HausdorffVisitor
    {
       const auto* b = std::get_if<gi::LineString>(&other);
       if (!b) return;
-      const double h = hausdorff(a, *b, stride);
+      const double h = hausdorff(a, *b, stride, cancelled);
       if (h > max_out) max_out = h;
-      avg_acc += averageDeviation(a, *b, stride);
+      avg_acc += averageDeviation(a, *b, stride, cancelled);
       ++avg_count;
    }
 
@@ -202,9 +209,9 @@ struct HausdorffVisitor
       const std::size_t n = std::min(a.size(), b->size());
       for (std::size_t i = 0; i < n; ++i)
       {
-         const double h = hausdorff(a[i], (*b)[i], stride);
+         const double h = hausdorff(a[i], (*b)[i], stride, cancelled);
          if (h > max_out) max_out = h;
-         avg_acc += averageDeviation(a[i], (*b)[i], stride);
+         avg_acc += averageDeviation(a[i], (*b)[i], stride, cancelled);
          ++avg_count;
       }
    }
@@ -221,9 +228,9 @@ struct HausdorffVisitor
          const std::size_t nr = std::min(pa.size(), pb.size());
          for (std::size_t ri = 0; ri < nr; ++ri)
          {
-            const double h = hausdorff(pa[ri], pb[ri], stride);
+            const double h = hausdorff(pa[ri], pb[ri], stride, cancelled);
             if (h > max_out) max_out = h;
-            avg_acc += averageDeviation(pa[ri], pb[ri], stride);
+            avg_acc += averageDeviation(pa[ri], pb[ri], stride, cancelled);
             ++avg_count;
          }
       }
@@ -252,36 +259,47 @@ bool isDegenerate(const gi::Geometry& g)
    return std::visit(DegenerateCheck{}, g);
 }
 
-double hausdorff(const gi::LineString& a, const gi::LineString& b,
-                 std::size_t stride)
+double hausdorff(const gi::LineString &a, const gi::LineString &b, std::size_t stride,
+                 const gen::CancellationCheck &cancelled)
 {
-   const double ab = directedHausdorff(a, b, stride);
-   const double ba = directedHausdorff(b, a, stride);
+   const double ab = directedHausdorff(a, b, stride, cancelled);
+   const double ba = directedHausdorff(b, a, stride, cancelled);
    return std::max(ab, ba);
 }
 
-double averageDeviation(const gi::LineString& a, const gi::LineString& b,
-                        std::size_t stride)
+double averageDeviation(const gi::LineString &a, const gi::LineString &b, std::size_t stride,
+                        const gen::CancellationCheck &cancelled)
 {
-   const double ab = directedAverage(a, b, stride);
-   const double ba = directedAverage(b, a, stride);
+   const double ab = directedAverage(a, b, stride, cancelled);
+   const double ba = directedAverage(b, a, stride, cancelled);
    return 0.5 * (ab + ba);
 }
 
-SimplificationMetrics evaluate(const std::vector<gi::Feature>& original,
-                               const std::vector<gi::Feature>& simplified,
-                               double elapsed_ms,
-                               std::size_t stride)
+SimplificationMetrics evaluate(const std::vector<gi::Feature> &original,
+                               const std::vector<gi::Feature> &simplified, double elapsed_ms,
+                               std::size_t stride, const gen::CancellationCheck &cancelled,
+                               const std::function<void(std::size_t)> &progress)
 {
    SimplificationMetrics m;
-   m.orig_vertices   = countVertices(original);
-   m.result_vertices = countVertices(simplified);
+   for (const auto &feature : original)
+   {
+      gen::checkCancelled(cancelled);
+      m.orig_vertices += countVertices(feature.geometry);
+   }
+   for (const auto &feature : simplified)
+   {
+      gen::checkCancelled(cancelled);
+      m.result_vertices += countVertices(feature.geometry);
+   }
    m.orig_features   = original.size();
    m.elapsed_ms      = elapsed_ms;
 
    for (const auto& f : simplified)
+   {
+      gen::checkCancelled(cancelled);
       if (!isDegenerate(f.geometry))
          ++m.surviving_features;
+   }
 
    m.compression_ratio = (m.orig_vertices > 0)
                              ? static_cast<double>(m.result_vertices) /
@@ -295,8 +313,11 @@ SimplificationMetrics evaluate(const std::vector<gi::Feature>& original,
    const std::size_t n = std::min(original.size(), simplified.size());
    for (std::size_t i = 0; i < n; ++i)
    {
-      HausdorffVisitor v{simplified[i].geometry, stride, max_h, avg_sum, avg_count};
+      gen::checkCancelled(cancelled);
+      HausdorffVisitor v{simplified[i].geometry, stride, cancelled, max_h, avg_sum, avg_count};
       std::visit(v, original[i].geometry);
+      if (progress)
+         progress(i + 1);
    }
 
    m.hausdorff         = max_h;

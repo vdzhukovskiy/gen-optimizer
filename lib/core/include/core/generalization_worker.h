@@ -5,6 +5,7 @@
 #include "generalization/params.h"
 
 #include <QString>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -12,6 +13,16 @@ class QThread;
 
 namespace core
 {
+
+struct GeneralizationProgress
+{
+   qint64 completed = 0;
+   qint64 total = 0;
+   QString layer;
+   QString phase;
+   qint64 layer_completed = 0;
+   qint64 layer_total = 0;
+};
 
 struct GeneralizationResult
 {
@@ -27,9 +38,11 @@ class GeneralizationWorker
 public:
    GeneralizationWorker(std::shared_ptr<const MapData> data,
                         std::string algorithm, gen::ParamSet params);
-   GeneralizationResult run(QThread& thread) const;
+   GeneralizationResult
+   run(QThread &thread,
+       const std::function<void(const GeneralizationProgress &)> &progress = {}) const;
 
-private:
+ private:
    std::shared_ptr<const MapData> data_;
    std::string algorithm_;
    gen::ParamSet params_;
