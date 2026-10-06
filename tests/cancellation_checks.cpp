@@ -517,6 +517,41 @@ void checkProjectedScenario(const QString &path)
    }
 }
 
+void checkConfiguredScenarios(const QString& config)
+{
+   for (const auto& scenario : core::readScenarios(config))
+   {
+      core::Session session;
+      MainWindow window(&session);
+      window.show();
+      require(session.loadScenario(config, scenario.id), "Cannot load real configured scenario");
+      require(!session.hasGeneralization() && !session.isGeneralizing(), "Scenario auto-generated");
+      auto* label = window.findChild<QLabel*>("scenarioNameLabel");
+      require(label && label->text() == scenario.id && window.findChild<QAction*>("openScenarioAction"),
+              "Scenario identity or open action missing");
+      for (const auto& [algorithm, settings] : scenario.algorithms)
+      {
+         session.setAlgorithm(algorithm);
+         for (const auto& spec : session.currentSpecs())
+         {
+            const auto& expected = settings.at(spec.name);
+            require(spec.min_value == expected.min_value && spec.max_value == expected.max_value
+                       && spec.step == expected.step && spec.logarithmic == expected.logarithmic
+                       && session.currentParams().at(spec.name) == expected.initial,
+                    "Scenario setting not applied");
+         }
+         auto* spin = window.findChild<QDoubleSpinBox*>();
+         const auto& expected = settings.begin()->second;
+         require(spin && spin->minimum() == expected.min_value && spin->maximum() == expected.max_value
+                    && spin->value() == expected.initial, "UI does not match scenario");
+         session.regenerateAsync();
+         awaitIdle(session);
+         require(session.hasGeneralization() && session.resultMatchesSettings(), "Scenario generation failed");
+      }
+      std::cout << "Configured scenario verified: " << scenario.id.toStdString() << '\n';
+   }
+}
+
 void checkLargeCancellation(const QString &path)
 {
    core::Session session;
@@ -575,6 +610,12 @@ int main(int argc, char **argv)
       QTemporaryDir directory;
       require(directory.isValid(), "Cannot create temporary directory");
       checkSessionAndUi(writeFixture(directory));
+      if (argc == 3 && QString::fromLocal8Bit(argv[1]) == "--scenarios")
+      {
+         checkConfiguredScenarios(QString::fromLocal8Bit(argv[2]));
+         std::cout << "PASS: configured scenarios and UI\n";
+         return 0;
+      }
       if (argc > 1)
          checkSessionAndUi(QString::fromLocal8Bit(argv[1]));
       if (argc > 2)

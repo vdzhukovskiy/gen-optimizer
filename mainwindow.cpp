@@ -16,6 +16,9 @@
 #include <QTimer>
 #include <QAction>
 #include <QToolBar>
+#include <QFileDialog>
+#include <QInputDialog>
+#include <QMessageBox>
 #include <algorithm>
 #include <cmath>
 
@@ -102,6 +105,28 @@ void MainWindow::buildUi()
    auto* navigation = addToolBar(tr("Map navigation"));
    navigation->setMovable(false);
    navigation->addAction(fit_action);
+   auto* open_scenario = navigation->addAction(tr("Open scenario…"));
+   open_scenario->setObjectName(QStringLiteral("openScenarioAction"));
+   connect(open_scenario, &QAction::triggered, this, [this] {
+      const QString path = QFileDialog::getOpenFileName(this, tr("Open scenario configuration"),
+                                                       {}, tr("JSON files (*.json)"));
+      if (path.isEmpty()) return;
+      try
+      {
+         const auto scenarios = core::readScenarios(path);
+         QStringList names;
+         for (const auto& scenario : scenarios) names << scenario.id;
+         bool accepted = true;
+         const QString selected = names.size() == 1 ? names.front()
+            : QInputDialog::getItem(this, tr("Select scenario"), tr("Scenario:"), names, 0, false, &accepted);
+         if (accepted && !session_->loadScenario(path, selected))
+            QMessageBox::critical(this, tr("Scenario load failed"), session_->lastError());
+      }
+      catch (const std::exception& error)
+      {
+         QMessageBox::critical(this, tr("Invalid scenario configuration"), QString::fromUtf8(error.what()));
+      }
+   });
    statusBar()->showMessage(tr("ready — O original, S simplified, A overlay, G regenerate"));
 }
 

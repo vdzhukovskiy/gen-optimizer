@@ -47,7 +47,41 @@ Session::~Session()
 
 void Session::loadPath(const QString& path, const QString& filter)
 {
+   loadData(path, filter, std::nullopt);
+}
+
+bool Session::loadScenario(const QString& config_path, const QString& scenario_id)
+{
+   try
+   {
+      const auto scenarios = readScenarios(config_path);
+      const auto selected = std::find_if(scenarios.begin(), scenarios.end(),
+                                        [&](const Scenario& s) { return s.id == scenario_id; });
+      if (selected == scenarios.end()) throw std::invalid_argument("Unknown scenario id");
+      // Проверить файл и CRS до изменения текущих данных и настроек.
+      gi::Importer importer(selected->data_path.toStdString());
+      const auto layers = importer.layers();
+      if (layers.empty()) throw std::invalid_argument("Scenario file has no layers");
+      for (const auto& layer : layers)
+         if (layer.crs.epsg != selected->expected_epsg)
+            throw std::invalid_argument("Scenario data CRS differs from target_epsg");
+      loadData(selected->data_path, {}, *selected);
+      return state_ == State::Ready && !data_->layers.empty();
+   }
+   catch (const std::exception& error)
+   {
+      last_error_ = QString::fromUtf8(error.what());
+      emit errorOccurred(last_error_);
+      emit statusMessage(tr("scenario failed: %1").arg(last_error_));
+      return false;
+   }
+}
+
+void Session::loadData(const QString& path, const QString& filter, std::optional<Scenario> scenario)
+{
    cancelGeneralization();
+   const bool leaving_scenario = scenario_.has_value() && !scenario.has_value();
+   scenario_ = std::move(scenario);
    setState(State::Loading);
    emit statusMessage(tr("loading %1...").arg(path));
 
@@ -78,6 +112,9 @@ void Session::loadPath(const QString& path, const QString& filter)
 
       if (layers.empty())
       {
+         if (scenario_) throw std::runtime_error("Scenario has no matching layers");
+         if (leaving_scenario) setAlgorithm(currentAlgorithm());
+         else refreshParamSpecs();
          setState(State::Ready);
          emit statusMessage(tr("no matching layers"));
          emit dataChanged();
@@ -144,6 +181,9 @@ void Session::loadPath(const QString& path, const QString& filter)
 
       if (data_->layers.empty())
       {
+         if (scenario_) throw std::runtime_error("Scenario data could not be read");
+         if (leaving_scenario) setAlgorithm(currentAlgorithm());
+         else refreshParamSpecs();
          setState(State::Ready);
          emit statusMessage(tr("nothing loaded"));
          emit dataChanged();
@@ -165,7 +205,17 @@ void Session::loadPath(const QString& path, const QString& filter)
       if (crs_mismatch)
          msg += tr(" [WARNING: layer CRS mismatch]");
 
-      refreshParamSpecs();
+      if (scenario_)
+      {
+         if (crs_mismatch || data_->reference_crs.epsg != scenario_->expected_epsg)
+            throw std::runtime_error("Scenario CRS mismatch");
+         setAlgorithm(scenario_->default_algorithm);
+         msg = tr("scenario %1: ").arg(scenario_->id) + msg;
+      }
+      else if (leaving_scenario)
+         setAlgorithm(currentAlgorithm());
+      else
+         refreshParamSpecs();
       setState(State::Ready);
       emit statusMessage(msg);
       emit dataChanged();
@@ -173,7 +223,11 @@ void Session::loadPath(const QString& path, const QString& filter)
    catch (const std::exception& e)
    {
       last_error_ = QString::fromUtf8(e.what());
+      scenario_.reset();
+      data_ = std::make_shared<MapData>();
+      refreshParamSpecs();
       setState(State::Error);
+      emit dataChanged();
       emit errorOccurred(last_error_);
       emit statusMessage(tr("load failed: %1").arg(last_error_));
    }
@@ -188,7 +242,7 @@ void Session::setAlgorithm(std::string_view name)
    specs_ = specsForCurrentData();
    params_.clear();
    for (const auto& s : specs_)
-      params_[s.name] = defaultParamValue(s);
+      params_[s.name] = initialParamValue(s);
 
    emit algorithmChanged(QString::fromStdString(std::string(name)));
    emit paramsChanged();
@@ -215,7 +269,31 @@ gen::ParamSpecs Session::specsForCurrentData() const
             spec.step = 1;
          }
       }
+   if (scenario_)
+   {
+      const auto algorithm_settings = scenario_->algorithms.find(currentAlgorithm());
+      if (algorithm_settings != scenario_->algorithms.end())
+         for (auto& spec : specs)
+         {
+            const auto& configured = algorithm_settings->second.at(spec.name);
+            spec.min_value = configured.min_value;
+            spec.max_value = configured.max_value;
+            spec.step = configured.step;
+            spec.logarithmic = configured.logarithmic;
+         }
+   }
    return specs;
+}
+
+double Session::initialParamValue(const gen::ParamSpec& spec) const
+{
+   if (scenario_)
+   {
+      const auto algorithm_settings = scenario_->algorithms.find(currentAlgorithm());
+      if (algorithm_settings != scenario_->algorithms.end())
+         return algorithm_settings->second.at(spec.name).initial;
+   }
+   return defaultParamValue(spec);
 }
 
 void Session::refreshParamSpecs()
@@ -224,7 +302,8 @@ void Session::refreshParamSpecs()
    bool changed = updated.size() != specs_.size();
    for (std::size_t i = 0; !changed && i < updated.size(); ++i)
       changed = updated[i].min_value != specs_[i].min_value ||
-                updated[i].max_value != specs_[i].max_value || updated[i].step != specs_[i].step;
+                updated[i].max_value != specs_[i].max_value || updated[i].step != specs_[i].step
+                || updated[i].logarithmic != specs_[i].logarithmic;
    if (changed)
    {
       specs_ = updated;
@@ -248,7 +327,7 @@ void Session::setParam(std::string_view name, double value)
 void Session::resetParams()
 {
    for (const auto& s : specs_)
-      params_[s.name] = defaultParamValue(s);
+      params_[s.name] = initialParamValue(s);
    emit paramsChanged();
 }
 

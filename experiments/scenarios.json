@@ -6,24 +6,132 @@
       "description": "Norwegian coast and fjords: detailed coastal lines",
       "source_layer": "ne_10m_coastline",
       "geometry": "line",
-      "bbox_wgs84": [6.0, 58.0, 9.0, 61.0],
-      "target_epsg": 32632
+      "bbox_wgs84": [
+        6.0,
+        58.0,
+        9.0,
+        61.0
+      ],
+      "target_epsg": 32632,
+      "data_file": "generated/regions/norway_coast.gpkg",
+      "default_algorithm": "douglas-peucker",
+      "algorithms": {
+        "douglas-peucker": {
+          "epsilon": {
+            "min": 1,
+            "max": 10000,
+            "step": 1,
+            "initial": 1000,
+            "logarithmic": true
+          }
+        },
+        "visvalingam-whyatt": {
+          "area_threshold": {
+            "min": 1,
+            "max": 100000000.0,
+            "step": 1,
+            "initial": 100000,
+            "logarithmic": true
+          }
+        },
+        "li-openshaw": {
+          "window_size": {
+            "min": 1,
+            "max": 10000,
+            "step": 1,
+            "initial": 1000,
+            "logarithmic": true
+          }
+        }
+      }
     },
     {
       "id": "central_europe_rivers",
       "description": "Central European rivers: mixed straight and sinuous sections",
       "source_layer": "ne_10m_rivers_lake_centerlines",
       "geometry": "line",
-      "bbox_wgs84": [8.0, 48.0, 12.0, 51.0],
-      "target_epsg": 32632
+      "bbox_wgs84": [
+        8.0,
+        48.0,
+        12.0,
+        51.0
+      ],
+      "target_epsg": 32632,
+      "data_file": "generated/regions/central_europe_rivers.gpkg",
+      "default_algorithm": "douglas-peucker",
+      "algorithms": {
+        "douglas-peucker": {
+          "epsilon": {
+            "min": 1,
+            "max": 10000,
+            "step": 1,
+            "initial": 1000,
+            "logarithmic": true
+          }
+        },
+        "visvalingam-whyatt": {
+          "area_threshold": {
+            "min": 1,
+            "max": 100000000.0,
+            "step": 1,
+            "initial": 100000,
+            "logarithmic": true
+          }
+        },
+        "li-openshaw": {
+          "window_size": {
+            "min": 1,
+            "max": 10000,
+            "step": 1,
+            "initial": 1000,
+            "logarithmic": true
+          }
+        }
+      }
     },
     {
       "id": "finland_lakes",
       "description": "Finnish lakes: polygon boundaries, holes and small objects",
       "source_layer": "ne_10m_lakes",
       "geometry": "polygon",
-      "bbox_wgs84": [24.0, 60.0, 30.0, 64.0],
-      "target_epsg": 32635
+      "bbox_wgs84": [
+        24.0,
+        60.0,
+        30.0,
+        64.0
+      ],
+      "target_epsg": 32635,
+      "data_file": "generated/regions/finland_lakes.gpkg",
+      "default_algorithm": "douglas-peucker",
+      "algorithms": {
+        "douglas-peucker": {
+          "epsilon": {
+            "min": 1,
+            "max": 5000,
+            "step": 1,
+            "initial": 500,
+            "logarithmic": true
+          }
+        },
+        "visvalingam-whyatt": {
+          "area_threshold": {
+            "min": 1,
+            "max": 10000000.0,
+            "step": 1,
+            "initial": 100000,
+            "logarithmic": true
+          }
+        },
+        "li-openshaw": {
+          "window_size": {
+            "min": 1,
+            "max": 5000,
+            "step": 1,
+            "initial": 500,
+            "logarithmic": true
+          }
+        }
+      }
     }
   ]
 }

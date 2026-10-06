@@ -2,6 +2,7 @@
 
 #include "core/generalization_worker.h"
 #include "core/map_data.h"
+#include "core/scenario.h"
 #include "core/metrics.h"
 #include "generalization/algorithm.h"
 
@@ -32,6 +33,8 @@ public:
 
    // ─── Данные ──────────────────────────────────────────────────────
    void loadPath(const QString& path, const QString& filter = {});
+   bool loadScenario(const QString& config_path, const QString& scenario_id);
+   const std::optional<Scenario>& scenario() const noexcept { return scenario_; }
 
    State          state() const noexcept { return state_; }
    const MapData& data()  const noexcept { return *data_; }
@@ -46,7 +49,7 @@ public:
    // Меняет один параметр. Автоматически НЕ запускает пересчёт.
    void setParam(std::string_view name, double value);
 
-   // Возвращает параметры к дефолтным значениям из spec текущего алгоритма.
+   // Возвращает initial из сценария или дефолтные значения текущего алгоритма.
    // Автоматически НЕ запускает пересчёт.
    void resetParams();
 
@@ -119,6 +122,8 @@ private:
   };
 
   void startGeneralization(GeneralizationRequest request);
+  void loadData(const QString& path, const QString& filter, std::optional<Scenario> scenario);
+  double initialParamValue(const gen::ParamSpec& spec) const;
   gen::ParamSpecs specsForCurrentData() const;
   void refreshParamSpecs();
   void setState(State s);
@@ -126,6 +131,7 @@ private:
   static double defaultParamValue(const gen::ParamSpec &spec);
 
   State state_ = State::Idle;
+  std::optional<Scenario> scenario_;
   std::shared_ptr<MapData> data_ = std::make_shared<MapData>();
   QString last_error_;
   QThread *generalization_thread_ = nullptr;

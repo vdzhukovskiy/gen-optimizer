@@ -27,3 +27,8 @@ add_executable(scenario-checks scenario_checks.cpp)
 target_link_libraries(scenario-checks PRIVATE core Qt6::Core GDAL::GDAL)
 add_test(NAME scenario-checks COMMAND scenario-checks $<TARGET_FILE:prepare-scenarios>)
 set_tests_properties(scenario-checks PROPERTIES TIMEOUT 60)
+
+add_executable(scenario-config-checks scenario_config_checks.cpp)
+target_link_libraries(scenario-config-checks PRIVATE core Qt6::Core)
+add_test(NAME scenario-config-checks COMMAND scenario-config-checks)
+set_tests_properties(scenario-config-checks PROPERTIES TIMEOUT 60)

@@ -119,6 +119,8 @@ void StatusPanel::updateFrom(const core::Session &session)
 
    const double total_ratio = (sum_orig > 0.0) ? sum_res / sum_orig : 1.0;
    QString settings = QString::fromStdString(session.resultAlgorithm());
+   if (session.scenario())
+      settings = tr("Scenario: %1\n").arg(session.scenario()->id) + settings;
    std::vector<std::pair<std::string, double>> params(session.resultParams().begin(),
                                                       session.resultParams().end());
    std::sort(params.begin(), params.end());

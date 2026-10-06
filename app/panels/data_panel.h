@@ -18,6 +18,7 @@ public:
 
 private:
    QLabel* source_   = nullptr;
+   QLabel* scenario_ = nullptr;
    QLabel* crs_      = nullptr;
    QLabel* layers_   = nullptr;
    QLabel* features_ = nullptr;

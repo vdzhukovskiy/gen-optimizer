@@ -6,6 +6,8 @@ set(CMAKE_AUTORCC ON)
 add_library(core STATIC
     include/core/session.h
     include/core/map_data.h
+    include/core/scenario.h
+    src/scenario.cpp
     include/core/generalization_worker.h
     src/generalization_worker.cpp
     src/session.cpp
