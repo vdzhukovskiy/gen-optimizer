@@ -3,6 +3,7 @@
 #include "core/generalization_worker.h"
 #include "core/map_data.h"
 #include "core/scenario.h"
+#include "core/run_history.h"
 #include "core/metrics.h"
 #include "generalization/algorithm.h"
 
@@ -76,6 +77,8 @@ public:
    const gen::ParamSet&           currentParams()    const noexcept;
    const gen::ParamSpecs&         currentSpecs()     const noexcept;
 
+   const std::vector<RunRecord> &runHistory() const noexcept { return run_history_; }
+
    bool hasGeneralization() const noexcept;
    const std::string &resultAlgorithm() const noexcept
    {
@@ -118,6 +121,7 @@ signals:
                                       qint64 layer_total);
    void generalizationFinished();
    void generalizationDone();
+   void runHistoryChanged();
    void errorOccurred(const QString& message);
    void statusMessage(const QString& message);
 
@@ -128,6 +132,7 @@ private:
      std::string algorithm;
      gen::ParamSet params;
      metrics::EvaluationSettings evaluation;
+     RunRecord record;
   };
 
   void startGeneralization(GeneralizationRequest request);
@@ -139,6 +144,9 @@ private:
   void clearGeneralization();
   static double defaultParamValue(const gen::ParamSpec &spec);
 
+  std::vector<RunRecord> run_history_;
+  QString data_path_;
+  QString layer_filter_;
   State state_ = State::Idle;
   std::optional<Scenario> scenario_;
   std::shared_ptr<MapData> data_ = std::make_shared<MapData>();

@@ -12,6 +12,8 @@ add_library(core STATIC
     src/generalization_worker.cpp
     src/session.cpp
     src/metrics.cpp
+    include/core/run_history.h
+    src/run_history.cpp
 )
 
 target_include_directories(core PUBLIC include)

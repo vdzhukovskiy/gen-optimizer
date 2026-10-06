@@ -32,3 +32,8 @@ add_executable(scenario-config-checks scenario_config_checks.cpp)
 target_link_libraries(scenario-config-checks PRIVATE core Qt6::Core)
 add_test(NAME scenario-config-checks COMMAND scenario-config-checks)
 set_tests_properties(scenario-config-checks PROPERTIES TIMEOUT 60)
+
+add_executable(run-history-checks run_history_checks.cpp)
+target_link_libraries(run-history-checks PRIVATE core Qt6::Core)
+add_test(NAME run-history-checks COMMAND run-history-checks)
+set_tests_properties(run-history-checks PROPERTIES TIMEOUT 60)

@@ -19,6 +19,11 @@
 #include <QFileDialog>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QDialog>
+#include <QHeaderView>
+#include <QTableWidget>
+#include <QThread>
+#include <memory>
 #include <algorithm>
 #include <cmath>
 
@@ -53,6 +58,11 @@ MainWindow::MainWindow(core::Session* session, QWidget* parent)
 
    data_panel_->updateFrom(*session_);
    status_panel_->updateFrom(*session_);
+}
+
+MainWindow::~MainWindow()
+{
+   if (export_thread_) export_thread_->wait();
 }
 
 void MainWindow::buildUi()
@@ -129,6 +139,80 @@ void MainWindow::buildUi()
       {
          QMessageBox::critical(this, tr("Invalid scenario configuration"), QString::fromUtf8(error.what()));
       }
+   });
+   auto *history_action = navigation->addAction(tr("Run history…"));
+   history_action->setObjectName(QStringLiteral("runHistoryAction"));
+   auto *export_action = navigation->addAction(tr("Export CSV…"));
+   export_action->setObjectName(QStringLiteral("exportCsvAction"));
+   export_action->setEnabled(!session_->runHistory().empty());
+   connect(session_, &core::Session::runHistoryChanged, this, [this, export_action]
+   {
+      export_action->setEnabled(!export_thread_ && !session_->runHistory().empty());
+   });
+   connect(history_action, &QAction::triggered, this, [this]
+   {
+      auto *dialog = new QDialog(this);
+      dialog->setAttribute(Qt::WA_DeleteOnClose);
+      dialog->setWindowTitle(tr("Completed runs — export CSV to keep them after closing"));
+      dialog->resize(1100, 450);
+      auto *table = new QTableWidget(0, 9, dialog);
+      table->setObjectName(QStringLiteral("runHistoryTable"));
+      table->setHorizontalHeaderLabels({tr("Run ID"), tr("Started UTC"), tr("Scenario / data"),
+         tr("Algorithm"), tr("Parameters"), tr("Evaluation"), tr("Layers"),
+         tr("Calculation ms"), tr("Finished UTC")});
+      table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+      table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+      auto *layout = new QVBoxLayout(dialog);
+      layout->addWidget(table);
+      const auto refresh = [this, table]
+      {
+         const auto &runs = session_->runHistory();
+         table->setRowCount(static_cast<int>(runs.size()));
+         for (int i = 0; i < static_cast<int>(runs.size()); ++i)
+         {
+            const auto &run = runs[i];
+            const QStringList cells{run.id, run.started_utc.toString(Qt::ISODateWithMs),
+               run.scenario_id.isEmpty() ? run.data_path : run.scenario_id,
+               QString::fromStdString(run.algorithm), core::runParametersJson(run.params),
+               tr("%1, step %2").arg(run.evaluation.mode == core::metrics::EvaluationMode::Fast
+                                      ? tr("Fast") : tr("Detailed"))
+                                  .arg(static_cast<qulonglong>(run.evaluation.stride())),
+               QString::number(run.layers.size()), QString::number(run.calculation_ms, 'f', 2),
+               run.finished_utc.toString(Qt::ISODateWithMs)};
+            for (int j = 0; j < cells.size(); ++j)
+               table->setItem(i, j, new QTableWidgetItem(cells[j]));
+         }
+      };
+      connect(session_, &core::Session::runHistoryChanged, dialog, refresh);
+      refresh();
+      dialog->show();
+   });
+   connect(export_action, &QAction::triggered, this, [this, export_action]
+   {
+      const QString path = QFileDialog::getSaveFileName(this, tr("Export completed runs"),
+                                                       "runs.csv", tr("CSV files (*.csv)"));
+      if (path.isEmpty()) return;
+      // Снимок: новые результаты во время экспорта войдут в следующий файл.
+      auto runs = session_->runHistory();
+      auto error = std::make_shared<QString>();
+      export_thread_ = QThread::create([path, runs = std::move(runs), error]
+      {
+         try { core::exportRunsCsv(path, runs); }
+         catch (const std::exception &e) { *error = QString::fromUtf8(e.what()); }
+      });
+      export_thread_->setParent(this);
+      export_action->setEnabled(false);
+      connect(export_thread_, &QThread::finished, this, [this, export_action, path, error]
+      {
+         export_thread_->wait();
+         export_thread_->deleteLater();
+         export_thread_ = nullptr;
+         export_action->setEnabled(!session_->runHistory().empty());
+         if (error->isEmpty()) statusBar()->showMessage(tr("CSV saved: %1").arg(path));
+         else QMessageBox::critical(this, tr("CSV export failed"), *error);
+      });
+      export_thread_->start();
+      statusBar()->showMessage(tr("Exporting completed runs…"));
    });
    statusBar()->showMessage(tr("ready — O original, S simplified, A overlay, G regenerate"));
 }

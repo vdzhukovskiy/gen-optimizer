@@ -368,6 +368,7 @@ void checkSessionAndUi(const QString &path)
    cancel->click();
    require(session.isCancelling(), "Cancel not requested");
    awaitIdle(session);
+   require(session.runHistory().empty(), "Cancelled run entered history");
    require(done == 0 && cancelled == 1 && !session.hasGeneralization(),
            "Cancelled task published a result");
 
@@ -375,6 +376,14 @@ void checkSessionAndUi(const QString &path)
    awaitIdle(session);
    require(done == 1 && session.hasGeneralization() && progress->value() == 1000,
            "Successful task did not publish complete result");
+   require(session.runHistory().size() == 1 &&
+              session.runHistory().front().evaluation.mode == core::metrics::EvaluationMode::Detailed,
+           "Completed run missing from history");
+   window.findChild<QAction *>("runHistoryAction")->trigger();
+   auto *history_table = window.findChild<QTableWidget *>("runHistoryTable");
+   require(history_table && history_table->rowCount() == 1 &&
+              window.findChild<QAction *>("exportCsvAction")->isEnabled(),
+           "History UI did not show completed run");
    requireSameCamera();
    double layer_totals = 0;
    for (int i = 0; i < static_cast<int>(session.data().layers.size()); ++i)
@@ -413,6 +422,11 @@ void checkSessionAndUi(const QString &path)
    window.findChild<QDoubleSpinBox *>()->setValue(1.0); // Не изменяет снимок заявки.
    awaitIdle(session);
    requireSameCamera();
+   require(session.runHistory().size() == 2 && history_table->rowCount() == 2 &&
+              session.runHistory()[0].id != session.runHistory()[1].id &&
+              session.runHistory()[1].params.at("window_size") == 0.5 &&
+              session.runHistory()[1].evaluation.mode == core::metrics::EvaluationMode::Detailed,
+           "Restart history did not preserve requested snapshot or distinct run ID");
    require(done == 2 && starts == 4 && cancelled == 2,
            "Restart launched duplicate tasks or published partial result");
    require(session.resultAlgorithm() == "li-openshaw" &&
@@ -435,6 +449,7 @@ void checkSessionAndUi(const QString &path)
    const auto retained_vertices = session.layerMetrics(0).result_vertices;
    const auto retained_items = window.findChild<QGraphicsView *>()->scene()->items();
    awaitIdle(session);
+   require(session.runHistory().size() == 2, "Cancellation changed history");
    require(done == 2 && !session.hasPendingRestart(), "Cancel did not clear queued restart");
    require(session.resultEvaluationSettings().mode == core::metrics::EvaluationMode::Detailed &&
               session.layerMetrics(0).sample_stride == 1 &&
@@ -613,6 +628,18 @@ void checkConfiguredScenarios(const QString& config)
                       << " Eval=" << m.metrics_ms << " ms\n";
          }
       }
+      require(session.runHistory().size() == 2 * scenario.algorithms.size(),
+              "Scenario history dropped repeated runs");
+      QTemporaryDir export_directory;
+      core::exportRunsCsv(export_directory.filePath("runs.csv"), session.runHistory());
+      for (const auto &run : session.runHistory())
+         require(run.scenario_id == scenario.id && run.config_sha256 == scenario.config_sha256 &&
+                    run.layers[0].crs.epsg == scenario.expected_epsg &&
+                    run.layers[0].metrics.sample_stride == run.evaluation.stride(),
+                 "Real scenario provenance or evaluation lost in history");
+      session.loadPath(scenario.data_path);
+      require(session.runHistory().size() == 2 * scenario.algorithms.size(),
+              "Loading other data erased history");
       std::cout << "Configured scenario verified: " << scenario.id.toStdString() << '\n';
    }
 }

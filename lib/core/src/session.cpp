@@ -5,6 +5,8 @@
 
 #include <QCoreApplication>
 #include <QThread>
+#include <QFileInfo>
+#include <QUuid>
 #include <algorithm>
 #include <cmath>
 #include <exception>
@@ -82,6 +84,8 @@ void Session::loadData(const QString& path, const QString& filter, std::optional
    cancelGeneralization();
    const bool leaving_scenario = scenario_.has_value() && !scenario.has_value();
    scenario_ = std::move(scenario);
+   data_path_ = QFileInfo(path).absoluteFilePath();
+   layer_filter_ = filter;
    setState(State::Loading);
    emit statusMessage(tr("loading %1...").arg(path));
 
@@ -339,7 +343,15 @@ void Session::regenerateAsync()
       return;
    }
 
-   GeneralizationRequest request{data_, currentAlgorithm(), params_, evaluation_};
+   GeneralizationRequest request{data_, currentAlgorithm(), params_, evaluation_, {}};
+   request.record.data_path = data_path_;
+   request.record.layer_filter = layer_filter_;
+   if (scenario_)
+   {
+      request.record.scenario_id = scenario_->id;
+      request.record.config_path = scenario_->config_path;
+      request.record.config_sha256 = scenario_->config_sha256;
+   }
    if (isGeneralizing())
    {
       pending_request_ = std::move(request);
@@ -365,6 +377,11 @@ void Session::cancelGeneralization()
 
 void Session::startGeneralization(GeneralizationRequest request)
 {
+   request.record.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+   request.record.started_utc = QDateTime::currentDateTimeUtc();
+   request.record.algorithm = request.algorithm;
+   request.record.params = request.params;
+   request.record.evaluation = request.evaluation;
    const auto job_id = ++job_id_;
    auto result = std::make_shared<GeneralizationResult>();
    GeneralizationWorker worker(request.data, request.algorithm, request.params, request.evaluation);
@@ -400,7 +417,7 @@ void Session::startGeneralization(GeneralizationRequest request)
 
    connect(
       thread, &QThread::finished, this,
-      [this, thread, result, request = std::move(request)]
+      [this, thread, result, request = std::move(request)]() mutable
       {
          thread->wait();
          const bool cancelled = cancellation_requested_ || result->interrupted;
@@ -431,6 +448,13 @@ void Session::startGeneralization(GeneralizationRequest request)
             result_params_ = request.params;
             result_evaluation_ = result->evaluation;
             result_total_ms_ = result->total_ms;
+            request.record.finished_utc = QDateTime::currentDateTimeUtc();
+            request.record.calculation_ms = result_total_ms_;
+            for (std::size_t i = 0; i < data_->layers.size(); ++i)
+               request.record.layers.push_back({QString::fromStdString(data_->layers[i].info.name),
+                                                data_->layers[i].info.crs, layer_metrics_[i]});
+            run_history_.push_back(std::move(request.record));
+            emit runHistoryChanged();
             last_error_.clear();
             progress_.completed = progress_.total;
             emit statusMessage(tr("generalization complete"));

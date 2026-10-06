@@ -8,6 +8,7 @@
 #include "map-renderer/map_transform.h"
 
 namespace core { class Session; }
+class QThread;
 class DataPanel;
 class AlgorithmPanel;
 class StatusPanel;
@@ -20,6 +21,7 @@ public:
    enum class ViewMode { Overlay, OriginalOnly, SimplifiedOnly };
 
    explicit MainWindow(core::Session* session, QWidget* parent = nullptr);
+   ~MainWindow() override;
 
 protected:
    void showEvent(QShowEvent* e) override;
@@ -39,6 +41,7 @@ private:
    void fitMap();
    void applyViewMode();
 
+   QThread *export_thread_ = nullptr;
    core::Session*  session_  = nullptr;
    QGraphicsScene* scene_    = nullptr;
    QGraphicsView*  view_     = nullptr;
