@@ -10,6 +10,7 @@
 #include "generalization/params.h"
 
 class QComboBox;
+class QSpinBox;
 class QFormLayout;
 class QLabel;
 class QPushButton;
@@ -53,6 +54,8 @@ private:
 
    core::Session*  session_ = nullptr;
    QComboBox*      combo_   = nullptr;
+   QComboBox *evaluation_mode_ = nullptr;
+   QSpinBox *evaluation_stride_ = nullptr;
    QWidget*        rows_host_ = nullptr;
    QFormLayout*    rows_layout_ = nullptr;
    QPushButton*    reset_   = nullptr;

@@ -12,6 +12,20 @@
 namespace core::metrics
 {
 
+enum class EvaluationMode { Fast, Detailed };
+
+// Настройка запуска; подробный режим всегда использует шаг 1.
+struct EvaluationSettings
+{
+   EvaluationMode mode = EvaluationMode::Fast;
+   std::size_t fast_stride = 8;
+   std::size_t stride() const noexcept
+   {
+      return mode == EvaluationMode::Detailed ? 1 : fast_stride;
+   }
+   bool operator==(const EvaluationSettings &) const = default;
+};
+
 // Результат сравнения исходной и генерализованной геометрии одного набора.
 // Все дистанции — в единицах CRS входных данных.
 struct SimplificationMetrics
@@ -26,6 +40,9 @@ struct SimplificationMetrics
    std::size_t invalid_comparisons = 0; // исключённые из оценки пары фич
    std::size_t evaluated_features = 0; // пары фич, участвовавшие в оценке расстояний
    double compression_ratio = 1.0; // result_vertices / orig_vertices
+
+   // Фактический шаг оценки; концы линий включаются всегда.
+   std::size_t sample_stride = 8;
 
    // Точность
    // NaN означает отсутствие сопоставимых невырожденных фич, а не нулевую ошибку.

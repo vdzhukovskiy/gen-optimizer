@@ -48,6 +48,9 @@ MainWindow::MainWindow(core::Session* session, QWidget* parent)
    connect(session_, &core::Session::algorithmChanged, this,
            [this] { status_panel_->updateFrom(*session_); });
 
+   connect(session_, &core::Session::evaluationSettingsChanged, this,
+           [this] { status_panel_->updateFrom(*session_); });
+
    data_panel_->updateFrom(*session_);
    status_panel_->updateFrom(*session_);
 }

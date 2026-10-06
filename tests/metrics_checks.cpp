@@ -32,6 +32,19 @@ void invalid(const gi::Geometry &a, const gi::Geometry &b)
 }
 void checkKnownGeometries()
 {
+   // Быстрая выборка пропускает пик между выбранными вершинами.
+   const std::vector<gi::Feature> spike{{1, gi::LineString{{0, 0}, {1, 3}, {2, 0}}, {}}};
+   const std::vector<gi::Feature> baseline{{1, gi::LineString{{0, 0}, {2, 0}}, {}}};
+   const auto fast = core::metrics::evaluate(spike, baseline, 0, 8);
+   const auto detailed = core::metrics::evaluate(spike, baseline, 0, 1);
+   close(fast.hausdorff, 0);
+   close(detailed.hausdorff, 3);
+   require(detailed.average_deviation > fast.average_deviation &&
+              fast.sample_stride == 8 && detailed.sample_stride == 1 &&
+              fast.evaluated_features == detailed.evaluated_features,
+           "Sampling failed to expose an omitted peak or changed coverage");
+   require(core::metrics::evaluate(spike, baseline, 0, 0).sample_stride == 1,
+           "Zero sampling step was not normalized");
    const gi::LineString line{{0, 0}, {10, 0}};
    const gi::LineString shifted{{0, 2}, {10, 2}};
    auto m = evaluate(line, shifted);

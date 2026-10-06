@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QAction>
 #include <QScrollBar>
+#include <QSpinBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
@@ -343,6 +344,24 @@ void checkSessionAndUi(const QString &path)
    QObject::connect(&timer, &QTimer::timeout, [&] { ++heartbeat; });
    timer.start(0);
 
+   auto *evaluation_mode = window.findChild<QComboBox *>("evaluationModeCombo");
+   auto *evaluation_stride = window.findChild<QSpinBox *>("evaluationStrideSpin");
+   require(evaluation_mode && evaluation_stride && evaluation_stride->value() == 8,
+           "Missing evaluation controls or wrong default");
+   bool invalid_stride_rejected = false;
+   try
+   {
+      session.setEvaluationSettings({core::metrics::EvaluationMode::Fast, 0});
+   }
+   catch (const std::invalid_argument &)
+   {
+      invalid_stride_rejected = true;
+   }
+   require(invalid_stride_rejected && session.evaluationSettings().fast_stride == 8,
+           "Invalid sampling step changed settings");
+   evaluation_mode->setCurrentIndex(1);
+   require(!evaluation_stride->isEnabled() && !session.isGeneralizing(),
+           "Detailed mode step enabled or settings triggered calculation");
    generate->click();
    require(cancel->isEnabled() && generate->isEnabled() && combo->isEnabled(),
            "Controls locked during task");
@@ -368,6 +387,14 @@ void checkSessionAndUi(const QString &path)
    }
    require(session.generalizationTotalMs() + 1e-6 >= layer_totals, "Job time excludes layer work");
    require(progress_updates > 0 && heartbeat > 0, "Missing progress or GUI heartbeat");
+   require(session.layerMetrics(0).sample_stride == 1 &&
+              session.resultEvaluationSettings().mode == core::metrics::EvaluationMode::Detailed,
+           "Detailed evaluation metadata missing");
+   evaluation_mode->setCurrentIndex(0);
+   evaluation_stride->setValue(3);
+   require(evaluation_stride->isEnabled() && !session.resultMatchesSettings() &&
+              session.layerMetrics(0).sample_stride == 1,
+           "Editing evaluation changed the previous result");
    const auto previous_vertices = session.layerMetrics(0).result_vertices;
    const auto previous_items = window.findChild<QGraphicsView *>()->scene()->items();
 
@@ -380,7 +407,9 @@ void checkSessionAndUi(const QString &path)
    require(session.isCancelling() && session.hasPendingRestart(), "Restart not queued");
    combo->setCurrentText("li-openshaw");
    window.findChild<QDoubleSpinBox *>()->setValue(0.5);
+   evaluation_mode->setCurrentIndex(1);
    generate->click(); // Последняя заявка заменяет предыдущую.
+   evaluation_mode->setCurrentIndex(0); // Не изменяет снимок оценки.
    window.findChild<QDoubleSpinBox *>()->setValue(1.0); // Не изменяет снимок заявки.
    awaitIdle(session);
    requireSameCamera();
@@ -389,11 +418,15 @@ void checkSessionAndUi(const QString &path)
    require(session.resultAlgorithm() == "li-openshaw" &&
               session.resultParams().at("window_size") == 0.5,
            "Restart did not use latest requested snapshot");
+   require(session.resultEvaluationSettings().mode == core::metrics::EvaluationMode::Detailed &&
+              session.layerMetrics(0).sample_stride == 1,
+           "Queued restart did not preserve evaluation snapshot");
    require(!session.resultMatchesSettings(), "Result confused with edited settings");
    bool labelled = false;
    for (auto *label : window.findChildren<QLabel *>())
       labelled |=
-         label->text().contains("window_size=0.5") && label->text().contains("settings changed");
+         label->text().contains("window_size=0.5") && label->text().contains("settings changed") &&
+         label->text().contains("Evaluation: detailed");
    require(labelled, "Displayed result settings missing");
 
    generate->click();
@@ -403,7 +436,9 @@ void checkSessionAndUi(const QString &path)
    const auto retained_items = window.findChild<QGraphicsView *>()->scene()->items();
    awaitIdle(session);
    require(done == 2 && !session.hasPendingRestart(), "Cancel did not clear queued restart");
-   require(session.layerMetrics(0).result_vertices == retained_vertices &&
+   require(session.resultEvaluationSettings().mode == core::metrics::EvaluationMode::Detailed &&
+              session.layerMetrics(0).sample_stride == 1 &&
+              session.layerMetrics(0).result_vertices == retained_vertices &&
               window.findChild<QGraphicsView *>()->scene()->items() == retained_items,
            "Cancel changed previous metrics or scene");
    require(!previous_items.empty() && previous_vertices > 0,
@@ -544,9 +579,39 @@ void checkConfiguredScenarios(const QString& config)
          const auto& expected = settings.begin()->second;
          require(spin && spin->minimum() == expected.min_value && spin->maximum() == expected.max_value
                     && spin->value() == expected.initial, "UI does not match scenario");
-         session.regenerateAsync();
-         awaitIdle(session);
-         require(session.hasGeneralization() && session.resultMatchesSettings(), "Scenario generation failed");
+         std::size_t vertices = 0;
+         double fast_h = 0;
+         for (const auto mode : {core::metrics::EvaluationMode::Fast,
+                                core::metrics::EvaluationMode::Detailed})
+         {
+            session.setEvaluationSettings({mode, 8});
+            session.regenerateAsync();
+            // Редактирование настройки во время работы не изменяет снимок задачи.
+            session.setEvaluationSettings({mode, 5});
+            awaitIdle(session);
+            const auto &m = session.layerMetrics(0);
+            const auto stride = mode == core::metrics::EvaluationMode::Fast ? 8u : 1u;
+            require(session.hasGeneralization() && m.sample_stride == stride &&
+                       session.resultEvaluationSettings().fast_stride == 8,
+                    "Scenario evaluation snapshot failed");
+            const auto reference = core::metrics::evaluate(session.data().layers[0].features,
+                                                           session.simplified(0), 0, stride);
+            require((std::isnan(m.hausdorff) && std::isnan(reference.hausdorff)) ||
+                       std::abs(m.hausdorff - reference.hausdorff) < 1e-9,
+                    "Worker did not apply selected evaluation stride");
+            if (mode == core::metrics::EvaluationMode::Fast)
+            {
+               vertices = m.result_vertices;
+               fast_h = m.hausdorff;
+            }
+            else
+               require(m.result_vertices == vertices &&
+                          (!std::isfinite(fast_h) || m.hausdorff + 1e-9 >= fast_h),
+                       "Detailed evaluation changed simplification or missed sampled maximum");
+            std::cout << scenario.id.toStdString() << " " << algorithm << " step=" << stride
+                      << " H=" << m.hausdorff << " Avg=" << m.average_deviation
+                      << " Eval=" << m.metrics_ms << " ms\n";
+         }
       }
       std::cout << "Configured scenario verified: " << scenario.id.toStdString() << '\n';
    }
@@ -571,6 +636,7 @@ void checkLargeCancellation(const QString &path)
 
    MainWindow window(&session);
    window.show();
+   session.setEvaluationSettings({core::metrics::EvaluationMode::Detailed, 8});
    bool metrics_started = false;
    QElapsedTimer cancellation_time;
    QObject::connect(&session, &core::Session::generalizationProgressChanged,
@@ -614,6 +680,11 @@ int main(int argc, char **argv)
       {
          checkConfiguredScenarios(QString::fromLocal8Bit(argv[2]));
          std::cout << "PASS: configured scenarios and UI\n";
+         return 0;
+      }
+      if (argc == 3 && QString::fromLocal8Bit(argv[1]) == "--cancel-metrics")
+      {
+         checkLargeCancellation(QString::fromLocal8Bit(argv[2]));
          return 0;
       }
       if (argc > 1)

@@ -339,7 +339,7 @@ void Session::regenerateAsync()
       return;
    }
 
-   GeneralizationRequest request{data_, currentAlgorithm(), params_};
+   GeneralizationRequest request{data_, currentAlgorithm(), params_, evaluation_};
    if (isGeneralizing())
    {
       pending_request_ = std::move(request);
@@ -367,7 +367,7 @@ void Session::startGeneralization(GeneralizationRequest request)
 {
    const auto job_id = ++job_id_;
    auto result = std::make_shared<GeneralizationResult>();
-   GeneralizationWorker worker(request.data, request.algorithm, request.params);
+   GeneralizationWorker worker(request.data, request.algorithm, request.params, request.evaluation);
    progress_ = {};
    for (const auto &layer : request.data->layers)
       progress_.total += 2 * static_cast<qint64>(layer.features.size());
@@ -429,6 +429,7 @@ void Session::startGeneralization(GeneralizationRequest request)
             layer_metrics_ = std::move(result->metrics);
             result_algorithm_ = request.algorithm;
             result_params_ = request.params;
+            result_evaluation_ = result->evaluation;
             result_total_ms_ = result->total_ms;
             last_error_.clear();
             progress_.completed = progress_.total;
@@ -452,10 +453,23 @@ void Session::startGeneralization(GeneralizationRequest request)
    emit statusMessage(tr("generalizing..."));
 }
 
+void Session::setEvaluationSettings(metrics::EvaluationSettings settings)
+{
+   if ((settings.mode != metrics::EvaluationMode::Fast &&
+        settings.mode != metrics::EvaluationMode::Detailed) ||
+       settings.fast_stride < 1 || settings.fast_stride > 1000000)
+      throw std::invalid_argument("Invalid evaluation settings");
+   if (settings == evaluation_)
+      return;
+   evaluation_ = settings;
+   emit evaluationSettingsChanged();
+}
+
 bool Session::resultMatchesSettings() const
 {
    return hasGeneralization() && result_algorithm_ == currentAlgorithm() &&
-          result_params_ == params_;
+          result_params_ == params_ && result_evaluation_.mode == evaluation_.mode &&
+          result_evaluation_.stride() == evaluation_.stride();
 }
 
 std::string Session::currentAlgorithm() const
@@ -505,6 +519,7 @@ void Session::clearGeneralization()
    layer_metrics_.clear();
    result_algorithm_.clear();
    result_params_.clear();
+   result_evaluation_ = {};
    result_total_ms_ = 0.0;
 }
 

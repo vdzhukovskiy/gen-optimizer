@@ -430,6 +430,8 @@ SimplificationMetrics evaluate(const std::vector<gi::Feature> &original,
                                const std::function<void(std::size_t)> &progress)
 {
    SimplificationMetrics m;
+   stride = std::max<std::size_t>(1, stride);
+   m.sample_stride = stride;
    for (const auto &feature : original)
    {
       gen::checkCancelled(cancelled);

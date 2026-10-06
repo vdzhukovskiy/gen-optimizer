@@ -85,6 +85,13 @@ public:
    {
       return result_params_;
    }
+   // Изменение оценки не запускает пересчёт и не изменяет готовый результат.
+   void setEvaluationSettings(metrics::EvaluationSettings settings);
+   const metrics::EvaluationSettings &evaluationSettings() const noexcept { return evaluation_; }
+   const metrics::EvaluationSettings &resultEvaluationSettings() const noexcept
+   {
+      return result_evaluation_;
+   }
    bool resultMatchesSettings() const;
    double generalizationTotalMs() const noexcept
    {
@@ -102,6 +109,7 @@ signals:
    void dataChanged();
    void algorithmChanged(const QString& name);
    void paramsChanged();
+   void evaluationSettingsChanged();
    void generalizationStarted();
    void generalizationCancellationRequested();
    void generalizationCancelled();
@@ -119,6 +127,7 @@ private:
      std::shared_ptr<const MapData> data;
      std::string algorithm;
      gen::ParamSet params;
+     metrics::EvaluationSettings evaluation;
   };
 
   void startGeneralization(GeneralizationRequest request);
@@ -141,6 +150,8 @@ private:
   GeneralizationProgress progress_;
   std::string result_algorithm_;
   gen::ParamSet result_params_;
+  metrics::EvaluationSettings evaluation_;
+  metrics::EvaluationSettings result_evaluation_;
   double result_total_ms_ = 0.0;
 
   std::unique_ptr<gen::GeneralizationAlgorithm> algorithm_;

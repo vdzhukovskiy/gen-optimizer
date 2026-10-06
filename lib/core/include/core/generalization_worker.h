@@ -28,6 +28,7 @@ struct GeneralizationResult
 {
    std::vector<std::vector<gi::Feature>> layers;
    std::vector<metrics::SimplificationMetrics> metrics;
+   metrics::EvaluationSettings evaluation;
    double total_ms = 0.0; // полный run(), включая подготовку и все слои
    QString error;
    bool interrupted = false;
@@ -38,7 +39,8 @@ class GeneralizationWorker
 {
 public:
    GeneralizationWorker(std::shared_ptr<const MapData> data,
-                        std::string algorithm, gen::ParamSet params);
+                        std::string algorithm, gen::ParamSet params,
+                        metrics::EvaluationSettings evaluation = {});
    GeneralizationResult
    run(QThread &thread,
        const std::function<void(const GeneralizationProgress &)> &progress = {}) const;
@@ -47,6 +49,7 @@ public:
    std::shared_ptr<const MapData> data_;
    std::string algorithm_;
    gen::ParamSet params_;
+   metrics::EvaluationSettings evaluation_;
 };
 
 } // namespace core

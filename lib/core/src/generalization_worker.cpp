@@ -11,8 +11,10 @@ namespace core
 {
 
 GeneralizationWorker::GeneralizationWorker(std::shared_ptr<const MapData> data,
-                                         std::string algorithm, gen::ParamSet params)
-    : data_(std::move(data)), algorithm_(std::move(algorithm)), params_(std::move(params))
+                                         std::string algorithm, gen::ParamSet params,
+                                         metrics::EvaluationSettings evaluation)
+    : data_(std::move(data)), algorithm_(std::move(algorithm)), params_(std::move(params)),
+      evaluation_(evaluation)
 {
 }
 
@@ -23,6 +25,7 @@ GeneralizationWorker::run(QThread &thread,
    QElapsedTimer job_timer;
    job_timer.start();
    GeneralizationResult result;
+   result.evaluation = evaluation_;
    try
    {
       const gen::CancellationCheck cancelled = [&thread]
@@ -94,7 +97,7 @@ GeneralizationWorker::run(QThread &thread,
          QElapsedTimer metrics_timer;
          metrics_timer.start();
          result.metrics[li] =
-            metrics::evaluate(original, simplified, simplification_ms, 8, cancelled,
+            metrics::evaluate(original, simplified, simplification_ms, evaluation_.stride(), cancelled,
                               [&](std::size_t completed)
                               {
                                  ++current.completed;

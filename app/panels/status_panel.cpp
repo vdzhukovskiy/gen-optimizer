@@ -110,9 +110,12 @@ void StatusPanel::updateFrom(const core::Session &session)
          tr("Full layer calculation. Loading and rendering are excluded."));
       const QString quality_scope = tr("Distances use only comparable, non-degenerate features. "
                                        "Evaluated: %1; excluded: %2. "
-                                       "N/A means no suitable features.")
+                                       "N/A means no suitable features. Sampling step: %3. "
+                                       "Vertex-to-segment approximation, not exact continuous "
+                                       "Hausdorff.")
                                        .arg(static_cast<qulonglong>(m.evaluated_features))
-                                       .arg(static_cast<qulonglong>(m.invalid_comparisons));
+                                       .arg(static_cast<qulonglong>(m.invalid_comparisons))
+                                       .arg(static_cast<qulonglong>(m.sample_stride));
       for (int column : {4, 5, 6})
          table_->item(i, column)->setToolTip(quality_scope);
    }
@@ -126,6 +129,11 @@ void StatusPanel::updateFrom(const core::Session &session)
    std::sort(params.begin(), params.end());
    for (const auto &[name, value] : params)
       settings += QStringLiteral(" %1=%2").arg(QString::fromStdString(name)).arg(value, 0, 'g', 6);
+   const auto &evaluation = session.resultEvaluationSettings();
+   settings += evaluation.mode == core::metrics::EvaluationMode::Detailed
+                  ? tr("\nEvaluation: detailed (all vertices, step 1)")
+                  : tr("\nEvaluation: fast (sampling step %1)")
+                       .arg(static_cast<qulonglong>(evaluation.stride()));
    if (!session.resultMatchesSettings())
       settings += tr(" (settings changed; showing previous result)");
    settings +=

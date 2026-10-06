@@ -8,6 +8,8 @@
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSpinBox>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -45,6 +47,39 @@ AlgorithmPanel::AlgorithmPanel(core::Session* session, QWidget* parent)
    rows_layout_ = new QFormLayout(rows_host_);
    rows_layout_->setContentsMargins(0, 0, 0, 0);
 
+   evaluation_mode_ = new QComboBox;
+   evaluation_mode_->setObjectName(QStringLiteral("evaluationModeCombo"));
+   evaluation_mode_->addItems({tr("Fast (sampled vertices)"), tr("Detailed (all vertices)")});
+   evaluation_stride_ = new QSpinBox;
+   evaluation_stride_->setObjectName(QStringLiteral("evaluationStrideSpin"));
+   evaluation_stride_->setRange(1, 1000000);
+   evaluation_stride_->setToolTip(tr("Check every Nth vertex and both endpoints. "
+                                    "Detailed mode checks every vertex. Neither mode guarantees "
+                                    "the exact continuous Hausdorff distance."));
+   auto *evaluation_form = new QFormLayout;
+   evaluation_form->addRow(tr("Metric evaluation"), evaluation_mode_);
+   evaluation_form->addRow(tr("Sampling step"), evaluation_stride_);
+   const auto sync_evaluation = [this]
+   {
+      const QSignalBlocker mode_block(evaluation_mode_);
+      const QSignalBlocker stride_block(evaluation_stride_);
+      const auto &settings = session_->evaluationSettings();
+      evaluation_mode_->setCurrentIndex(settings.mode == core::metrics::EvaluationMode::Fast ? 0 : 1);
+      evaluation_stride_->setValue(static_cast<int>(settings.fast_stride));
+      evaluation_stride_->setEnabled(settings.mode == core::metrics::EvaluationMode::Fast);
+   };
+   connect(session_, &core::Session::evaluationSettingsChanged, this, sync_evaluation);
+   sync_evaluation();
+   const auto apply_evaluation = [this]
+   {
+      session_->setEvaluationSettings({evaluation_mode_->currentIndex() == 0
+                                         ? core::metrics::EvaluationMode::Fast
+                                         : core::metrics::EvaluationMode::Detailed,
+                                      static_cast<std::size_t>(evaluation_stride_->value())});
+   };
+   connect(evaluation_mode_, &QComboBox::currentIndexChanged, this, apply_evaluation);
+   connect(evaluation_stride_, &QSpinBox::valueChanged, this, apply_evaluation);
+
    reset_ = new QPushButton(tr("Reset params"));
    generate_ = new QPushButton(tr("Generate"));
    generate_->setObjectName(QStringLiteral("generateButton"));
@@ -66,6 +101,7 @@ AlgorithmPanel::AlgorithmPanel(core::Session* session, QWidget* parent)
    root->addWidget(combo_);
    root->addWidget(rows_host_);
    root->addWidget(reset_);
+   root->addLayout(evaluation_form);
    root->addWidget(generate_);
    root->addWidget(cancel_);
    root->addWidget(progress_);
