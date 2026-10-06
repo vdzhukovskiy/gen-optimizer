@@ -47,6 +47,39 @@ template <class Function> void requireCancellation(Function function)
    require(cancelled, "Cancellation was swallowed or not checked inside computation");
 }
 
+void checkLiOpenshawGrid()
+{
+   const auto algorithm = gen::makeAlgorithm("li-openshaw");
+   const gen::ParamSet params{{"window_size", 1.0}};
+   const auto expect = [&](const gi::LineString& input, const gi::LineString& expected) {
+      const auto result = std::get<gi::LineString>(algorithm->simplify(input, params));
+      require(result.size() == expected.size(), "Li-Openshaw unexpected number of cell representatives");
+      for (std::size_t i = 0; i < result.size(); ++i)
+         require(std::abs(result[i].x - expected[i].x) < 1e-10
+                    && std::abs(result[i].y - expected[i].y) < 1e-10,
+                 "Li-Openshaw wrong inlet/outlet midpoint");
+   };
+   expect({{0, 0}, {1, 0}, {3, 0}}, {{0, 0}, {1, 0}, {2, 0}, {3, 0}});
+   expect({{0, 0}, {0.5, 0}, {1.5, 0}, {3, 0}}, {{0, 0}, {1, 0}, {2, 0}, {3, 0}});
+   expect({{0, 0}, {-1, 0}, {-3, 0}}, {{0, 0}, {-1, 0}, {-2, 0}, {-3, 0}});
+   expect({{0, 0}, {1, 1}, {3, 3}}, {{0, 0}, {1, 1}, {2, 2}, {3, 3}});
+   expect({{0, 0}, {0.5, 0.5}, {1.5, 1.5}, {3, 3}},
+          {{0, 0}, {1, 1}, {2, 2}, {3, 3}});
+   expect({{0, 0}, {0.1, 0.2}, {0.2, 0}}, {{0, 0}, {0.2, 0}});
+   expect({{0, 0}, {0, 0}, {1, 0}, {3, 0}}, {{0, 0}, {1, 0}, {2, 0}, {3, 0}});
+   expect({{0, 0}, {2, 0}, {0, 0}}, {{0, 0}, {1, 0}, {1.5, 0}, {1, 0}, {0, 0}});
+   // Изгиб в одной ячейке заменяется новой точкой между входом и выходом.
+   expect({{0, 0}, {1, 0.4}, {2, 0}}, {{0, 0}, {1, 0.2}, {2, 0}});
+   // Движение вдоль границы не создаёт фиктивных проходов по обеим сторонам.
+   expect({{0, 0}, {0.5, 0}, {0.5, 2}, {0.5, 3}},
+          {{0, 0}, {0.5, 0.25}, {0.5, 1}, {0.5, 2}, {0.5, 3}});
+   int checks = 0;
+   requireCancellation([&] {
+      algorithm->simplify(gi::LineString{{0, 0}, {1, 0}, {1000000, 1}}, params,
+                          [&] { return ++checks > 50; });
+   });
+}
+
 void checkAlgorithmsAndMetrics()
 {
    gi::LineString line;
@@ -317,6 +350,18 @@ void checkLargeCancellation(const QString &path)
    core::Session session;
    session.loadPath(path);
    require(!session.data().layers.empty(), "Large dataset failed to load");
+   // Прямой вызов исключает фолбэк воркера: ошибка обхода сетки провалит тест.
+   const auto li = gen::makeAlgorithm("li-openshaw");
+   std::size_t original_vertices = 0, result_vertices = 0;
+   for (const auto& layer : session.data().layers)
+      for (const auto& feature : layer.features)
+      {
+         original_vertices += core::metrics::countVertices(feature.geometry);
+         result_vertices += core::metrics::countVertices(li->simplify(feature.geometry, {{"window_size", 0.05}}));
+      }
+   require(result_vertices > 0, "Li-Openshaw produced no real-data vertices");
+   std::cout << "Real-data Li-Openshaw vertices: " << original_vertices << " -> " << result_vertices << '\n';
+
    MainWindow window(&session);
    window.show();
    bool metrics_started = false;
@@ -352,6 +397,7 @@ int main(int argc, char **argv)
    QApplication application(argc, argv);
    try
    {
+      checkLiOpenshawGrid();
       checkAlgorithmsAndMetrics();
       QTemporaryDir directory;
       require(directory.isValid(), "Cannot create temporary directory");
