@@ -13,6 +13,9 @@
 #include <QStatusBar>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QTimer>
+#include <QAction>
+#include <QToolBar>
 #include <algorithm>
 #include <cmath>
 
@@ -54,7 +57,12 @@ void MainWindow::buildUi()
    view_ = new QGraphicsView(this);
    view_->setRenderHint(QPainter::Antialiasing, true);
    view_->setDragMode(QGraphicsView::ScrollHandDrag);
-   view_->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+   view_->setTransformationAnchor(QGraphicsView::NoAnchor);
+   view_->setResizeAnchor(QGraphicsView::AnchorViewCenter);
+   // Постоянный размер viewport: появление полос не меняет минимальный масштаб.
+   // На масштабе всей карты полосы имеют нулевой диапазон и не перемещают карту.
+   view_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+   view_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
    view_->setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
    view_->viewport()->installEventFilter(this);
    view_->setToolTip(tr("Mouse wheel: zoom. Drag with left mouse button: move map."));
@@ -83,11 +91,23 @@ void MainWindow::buildUi()
    split->setSizes({1000, 380});
 
    setCentralWidget(split);
+   auto* fit_action = new QAction(tr("Fit map"), this);
+   fit_action->setObjectName(QStringLiteral("fitMapAction"));
+   fit_action->setShortcut(QKeySequence(Qt::Key_F));
+   fit_action->setToolTip(tr("Show the entire map (F)"));
+   connect(fit_action, &QAction::triggered, this, [this] {
+      updateZoomLimits();
+      fitMap();
+   });
+   auto* navigation = addToolBar(tr("Map navigation"));
+   navigation->setMovable(false);
+   navigation->addAction(fit_action);
    statusBar()->showMessage(tr("ready — O original, S simplified, A overlay, G regenerate"));
 }
 
 void MainWindow::onDataChanged()
 {
+   fitted_ = false;
    rebuildScene();
    data_panel_->updateFrom(*session_);
    status_panel_->updateFrom(*session_);
@@ -95,7 +115,7 @@ void MainWindow::onDataChanged()
 
 void MainWindow::onGeneralizationDone()
 {
-   rebuildScene();
+   updateSimplifiedLayers();
    status_panel_->updateFrom(*session_);
 }
 
@@ -108,6 +128,7 @@ void MainWindow::rebuildScene()
 {
    scene_->clear();
    layer_items_.clear();
+   map_content_rect_ = {};
 
    const auto& data = session_->data();
    if (!data.has_bounds || data.layers.empty())
@@ -117,7 +138,9 @@ void MainWindow::rebuildScene()
    if (viewport.width() < 2 || viewport.height() < 2)
       return;
 
-   const mr::MapTransform xf = mr::MapTransform::fit(data.union_bounds, viewport);
+   // Координаты сцены зависят только от данных, а не от текущего размера окна.
+   map_transform_ = mr::MapTransform::fit(data.union_bounds, QRectF(0, 0, 1000, 1000));
+   const auto& xf = map_transform_;
    const bool has_gen = session_->hasGeneralization();
 
    layer_items_.reserve(data.layers.size());
@@ -141,20 +164,74 @@ void MainWindow::rebuildScene()
    }
 
    const QRectF content = scene_->itemsBoundingRect().adjusted(-20, -20, 20, 20);
-   // Оставляем пространство для перетаскивания карты даже при исходном масштабе.
-   scene_->setSceneRect(content.adjusted(-content.width() * 100, -content.height() * 100,
-                                        content.width() * 100, content.height() * 100));
+   map_content_rect_ = content;
+   // Скроллбары и перетаскивание ограничены картой, без искусственного пустого поля.
+   scene_->setSceneRect(content);
    applyViewMode();
 
    if (!fitted_)
    {
-      view_->fitInView(content, Qt::KeepAspectRatio);
+      updateZoomLimits();
+      fitMap();
       fitted_ = true;
    }
 }
 
+void MainWindow::updateSimplifiedLayers()
+{
+   // Оригинал, трансформация и границы сцены остаются прежними:
+   // пересчёт не меняет скроллбары и положение камеры.
+   if (layer_items_.size() != session_->data().layers.size())
+      return;
+   for (std::size_t i = 0; i < layer_items_.size(); ++i)
+   {
+      auto& pair = layer_items_[i];
+      delete pair.simplified;
+      pair.simplified = nullptr;
+      if (session_->hasGeneralization())
+      {
+         mr::LayerStyle style{kSimplifiedColor, Qt::SolidLine, kSimplifiedZ};
+         pair.simplified = new mr::LayerItem(session_->simplified(static_cast<int>(i)),
+                                            map_transform_, style);
+         scene_->addItem(pair.simplified);
+      }
+   }
+   applyViewMode();
+}
+
+void MainWindow::fitMap()
+{
+   if (map_content_rect_.isEmpty())
+      return;
+   view_->setTransform(QTransform::fromScale(minimum_scale_, minimum_scale_));
+   view_->centerOn(map_content_rect_.center());
+}
+
+void MainWindow::updateZoomLimits()
+{
+   if (map_content_rect_.isEmpty())
+      return;
+   const auto viewport = view_->viewport()->rect();
+   if (viewport.width() <= 4 || viewport.height() <= 4)
+      return;
+   const bool was_fitted = !fitted_ || view_->transform().m11() <= minimum_scale_ * (1 + 1e-9);
+   minimum_scale_ = std::min((viewport.width() - 4.0) / map_content_rect_.width(),
+                             (viewport.height() - 4.0) / map_content_rect_.height());
+   if (was_fitted || view_->transform().m11() < minimum_scale_)
+      fitMap();
+}
+
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+   if (watched == view_->viewport() && event->type() == QEvent::Resize && !zoom_limits_pending_)
+   {
+      // Дождаться раскладки панели и появления скроллбаров.
+      zoom_limits_pending_ = true;
+      QTimer::singleShot(0, this, [this] {
+         zoom_limits_pending_ = false;
+         updateZoomLimits();
+      });
+   }
    if (watched == view_->viewport() && event->type() == QEvent::Wheel)
    {
       auto* wheel = static_cast<QWheelEvent*>(event);
@@ -166,11 +243,16 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
          const QPoint cursor = wheel->position().toPoint();
          const QPointF before = view_->mapToScene(cursor);
          const double current_scale = view_->transform().m11();
-         const double target_scale = std::clamp(current_scale * std::pow(1.2, delta), 0.01, 1000.0);
-         view_->setTransformationAnchor(QGraphicsView::NoAnchor);
-         view_->scale(target_scale / current_scale, target_scale / current_scale);
-         const QPointF after = view_->mapToScene(cursor);
-         view_->centerOn(view_->mapToScene(view_->viewport()->rect().center()) + before - after);
+         const double target_scale = std::clamp(current_scale * std::pow(1.2, delta),
+                                                minimum_scale_, minimum_scale_ * 1000.0);
+         if (target_scale == minimum_scale_)
+            fitMap();
+         else
+         {
+            view_->scale(target_scale / current_scale, target_scale / current_scale);
+            const QPointF after = view_->mapToScene(cursor);
+            view_->centerOn(view_->mapToScene(view_->viewport()->rect().center()) + before - after);
+         }
       }
       wheel->accept();
       return true;

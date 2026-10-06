@@ -3,6 +3,8 @@
 #include "mainwindow.h"
 
 #include <QApplication>
+#include <QAction>
+#include <QScrollBar>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
@@ -234,8 +236,27 @@ void checkSessionAndUi(const QString &path)
                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
    QApplication::sendEvent(view->viewport(), &wheel);
    require(view->transform().m11() > initial_scale, "Wheel did not zoom map");
-   require(QLineF(anchor, view->mapToScene(cursor)).length() < 3.0 / initial_scale,
-           "Zoom did not preserve cursor anchor");
+   // На оси, где карта целиком помещается, её центрирование важнее якоря курсора.
+   const auto anchor_after = view->mapToScene(cursor);
+   if (view->sceneRect().width() * view->transform().m11() > view->viewport()->width())
+      require(std::abs(anchor.x() - anchor_after.x()) < 3.0 / initial_scale,
+              "Zoom did not preserve horizontal cursor anchor");
+   if (view->sceneRect().height() * view->transform().m11() > view->viewport()->height())
+      require(std::abs(anchor.y() - anchor_after.y()) < 3.0 / initial_scale,
+              "Zoom did not preserve vertical cursor anchor");
+   QWheelEvent zoom_out(cursor, view->viewport()->mapToGlobal(cursor), QPoint(), QPoint(0, -12000),
+                         Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+   QApplication::sendEvent(view->viewport(), &zoom_out);
+   require(std::abs(view->transform().m11() - initial_scale) < 1e-9,
+           "Zoom-out exceeded full-map scale");
+   const auto full_map_center = view->mapToScene(view->viewport()->rect().center());
+   QApplication::sendEvent(view->viewport(), &zoom_out);
+   require(std::abs(view->transform().m11() - initial_scale) < 1e-9
+              && QLineF(full_map_center, view->mapToScene(view->viewport()->rect().center())).length() < 1e-9,
+           "Repeated zoom-out moved or shrank full map");
+   QWheelEvent zoom_in(cursor, view->viewport()->mapToGlobal(cursor), QPoint(), QPoint(0, 1200),
+                        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+   QApplication::sendEvent(view->viewport(), &zoom_in);
    const auto center_before = view->mapToScene(view->viewport()->rect().center());
    QMouseEvent press(QEvent::MouseButtonPress, cursor, view->viewport()->mapToGlobal(cursor),
                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
@@ -250,6 +271,52 @@ void checkSessionAndUi(const QString &path)
    require(QLineF(center_before, view->mapToScene(view->viewport()->rect().center())).length() > 1.0,
            "Mouse drag did not move map");
 
+   const auto zoomed_transform = view->transform();
+   const auto zoomed_center = view->mapToScene(view->viewport()->rect().center());
+   window.resize(window.width() + 140, window.height() + 80);
+   QApplication::processEvents();
+   require(view->transform() == zoomed_transform
+              && QLineF(zoomed_center, view->mapToScene(view->viewport()->rect().center())).length()
+                    < 3.0 / zoomed_transform.m11(),
+           "Resizing lost zoomed camera");
+   const auto requireBoundedViewport = [&] {
+      const QRectF bounds = view->sceneRect();
+      const QRectF visible = view->mapToScene(view->viewport()->rect()).boundingRect();
+      const double tolerance = 3.0 / view->transform().m11();
+      if (visible.width() < bounds.width())
+         require(visible.left() >= bounds.left() - tolerance && visible.right() <= bounds.right() + tolerance,
+                 "Horizontal scrolling escaped map bounds");
+      else
+         require(std::abs(visible.center().x() - bounds.center().x()) < tolerance,
+                 "Map not centered on non-scrollable horizontal axis");
+      if (visible.height() < bounds.height())
+         require(visible.top() >= bounds.top() - tolerance && visible.bottom() <= bounds.bottom() + tolerance,
+                 "Vertical scrolling escaped map bounds");
+      else
+         require(std::abs(visible.center().y() - bounds.center().y()) < tolerance,
+                 "Map not centered on non-scrollable vertical axis");
+   };
+   const int previous_horizontal = view->horizontalScrollBar()->value();
+   const int previous_vertical = view->verticalScrollBar()->value();
+   for (auto* bar : {view->horizontalScrollBar(), view->verticalScrollBar()})
+   {
+      bar->setValue(bar->minimum());
+      requireBoundedViewport();
+      bar->setValue(bar->maximum());
+      requireBoundedViewport();
+   }
+   view->horizontalScrollBar()->setValue(previous_horizontal);
+   view->verticalScrollBar()->setValue(previous_vertical);
+   const auto comparison_center = view->mapToScene(view->viewport()->rect().center());
+   const auto comparison_transform = view->transform();
+   const auto comparison_scene_rect = view->scene()->sceneRect();
+   const auto requireSameCamera = [&] {
+      require(view->transform() == comparison_transform
+                 && view->scene()->sceneRect() == comparison_scene_rect
+                 && QLineF(comparison_center, view->mapToScene(view->viewport()->rect().center())).length()
+                       < 3.0 / comparison_transform.m11(),
+              "Generalization changed map coordinates, zoom or center");
+   };
    int done = 0, cancelled = 0, starts = 0, heartbeat = 0, progress_updates = 0;
    qint64 last_completed = 0;
    QObject::connect(&session, &core::Session::generalizationDone, [&] { ++done; });
@@ -288,6 +355,7 @@ void checkSessionAndUi(const QString &path)
    awaitIdle(session);
    require(done == 1 && session.hasGeneralization() && progress->value() == 1000,
            "Successful task did not publish complete result");
+   requireSameCamera();
    require(progress_updates > 0 && heartbeat > 0, "Missing progress or GUI heartbeat");
    const auto previous_vertices = session.layerMetrics(0).result_vertices;
    const auto previous_items = window.findChild<QGraphicsView *>()->scene()->items();
@@ -304,6 +372,7 @@ void checkSessionAndUi(const QString &path)
    generate->click(); // Последняя заявка заменяет предыдущую.
    window.findChild<QDoubleSpinBox *>()->setValue(1.0); // Не изменяет снимок заявки.
    awaitIdle(session);
+   requireSameCamera();
    require(done == 2 && starts == 4 && cancelled == 2,
            "Restart launched duplicate tasks or published partial result");
    require(session.resultAlgorithm() == "li-openshaw" &&
@@ -330,6 +399,17 @@ void checkSessionAndUi(const QString &path)
            "Original completed scene was missing");
    require(!cancel->isEnabled() && generate->isEnabled(),
            "Controls not restored after cancellation");
+
+   auto* fit_action = window.findChild<QAction*>("fitMapAction");
+   require(fit_action, "Fit map action missing");
+   fit_action->trigger();
+   require(view->horizontalScrollBar()->minimum() == view->horizontalScrollBar()->maximum()
+              && view->verticalScrollBar()->minimum() == view->verticalScrollBar()->maximum(),
+           "Full-map view still allows scrolling off map");
+   requireBoundedViewport();
+   const auto fitted_transform = view->transform();
+   QApplication::sendEvent(view->viewport(), &zoom_out);
+   require(view->transform() == fitted_transform, "Zoom-out exceeded fit-map scale after reset");
 
    // Перезагрузка не должна публиковать результат от прежнего набора.
    generate->click();

@@ -5,6 +5,7 @@
 #include <QGraphicsView>
 
 #include <vector>
+#include "map-renderer/map_transform.h"
 
 namespace core { class Session; }
 class DataPanel;
@@ -33,6 +34,9 @@ private slots:
 private:
    void buildUi();
    void rebuildScene();
+   void updateSimplifiedLayers();
+   void updateZoomLimits();
+   void fitMap();
    void applyViewMode();
 
    core::Session*  session_  = nullptr;
@@ -52,4 +56,8 @@ private:
 
    ViewMode mode_   = ViewMode::Overlay;
    bool     fitted_ = false;
+   mr::MapTransform map_transform_;
+   QRectF map_content_rect_;
+   double minimum_scale_ = 1.0;
+   bool zoom_limits_pending_ = false;
 };
