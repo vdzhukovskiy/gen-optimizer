@@ -165,6 +165,7 @@ void Session::loadPath(const QString& path, const QString& filter)
       if (crs_mismatch)
          msg += tr(" [WARNING: layer CRS mismatch]");
 
+      refreshParamSpecs();
       setState(State::Ready);
       emit statusMessage(msg);
       emit dataChanged();
@@ -184,13 +185,52 @@ void Session::setAlgorithm(std::string_view name)
 {
    auto algorithm = gen::makeAlgorithm(name);
    algorithm_ = std::move(algorithm);
-   specs_     = algorithm_->paramSpecs();
+   specs_ = specsForCurrentData();
    params_.clear();
    for (const auto& s : specs_)
       params_[s.name] = defaultParamValue(s);
 
    emit algorithmChanged(QString::fromStdString(std::string(name)));
    emit paramsChanged();
+}
+
+gen::ParamSpecs Session::specsForCurrentData() const
+{
+   auto specs = algorithm_->paramSpecs();
+   const auto &crs = data_->reference_crs;
+   const bool metres = !crs.is_geographic && (crs.units == "metre" || crs.units == "meter");
+   if (metres)
+      for (auto &spec : specs)
+      {
+         if (spec.dimension == gen::ParamDimension::Length)
+         {
+            spec.min_value = 1;
+            spec.max_value = 10000;
+            spec.step = 1;
+         }
+         else if (spec.dimension == gen::ParamDimension::Area)
+         {
+            spec.min_value = 1;
+            spec.max_value = 1e8;
+            spec.step = 1;
+         }
+      }
+   return specs;
+}
+
+void Session::refreshParamSpecs()
+{
+   const auto updated = specsForCurrentData();
+   bool changed = updated.size() != specs_.size();
+   for (std::size_t i = 0; !changed && i < updated.size(); ++i)
+      changed = updated[i].min_value != specs_[i].min_value ||
+                updated[i].max_value != specs_[i].max_value || updated[i].step != specs_[i].step;
+   if (changed)
+   {
+      specs_ = updated;
+      resetParams();
+      emit algorithmChanged(QString::fromStdString(currentAlgorithm()));
+   }
 }
 
 void Session::setParam(std::string_view name, double value)
@@ -310,6 +350,7 @@ void Session::startGeneralization(GeneralizationRequest request)
             layer_metrics_ = std::move(result->metrics);
             result_algorithm_ = request.algorithm;
             result_params_ = request.params;
+            result_total_ms_ = result->total_ms;
             last_error_.clear();
             progress_.completed = progress_.total;
             emit statusMessage(tr("generalization complete"));
@@ -385,6 +426,7 @@ void Session::clearGeneralization()
    layer_metrics_.clear();
    result_algorithm_.clear();
    result_params_.clear();
+   result_total_ms_ = 0.0;
 }
 
 double Session::defaultParamValue(const gen::ParamSpec& spec)

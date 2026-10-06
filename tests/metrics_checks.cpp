@@ -37,7 +37,7 @@ void checkKnownGeometries()
    auto m = evaluate(line, shifted);
    close(m.hausdorff, 2);
    close(m.average_deviation, 2);
-   close(m.elapsed_ms, 12.5);
+   close(m.simplification_ms, 12.5);
    require(m.orig_vertices == 2 && m.result_vertices == 2 && m.surviving_features == 1 &&
               m.degenerate_features == 0 && m.invalid_comparisons == 0,
            "Wrong counters");

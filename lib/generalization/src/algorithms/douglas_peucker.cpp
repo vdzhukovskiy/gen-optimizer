@@ -79,10 +79,13 @@ gi::LineString DouglasPeucker::simplifyLine(const gi::LineString &line, const Pa
 ParamSpecs DouglasPeucker::paramSpecs() const
 {
    return {{
-       "epsilon",
-       "Maximum perpendicular deviation, in CRS units",
-       0.001, 1.0, 0.001,
-       /*logarithmic=*/true,
+      "epsilon",
+      "Maximum perpendicular deviation, in CRS units",
+      0.001,
+      1.0,
+      0.001,
+      /*logarithmic=*/true,
+      ParamDimension::Length,
    }};
 }
 

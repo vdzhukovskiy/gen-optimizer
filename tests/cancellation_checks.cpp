@@ -357,6 +357,16 @@ void checkSessionAndUi(const QString &path)
    require(done == 1 && session.hasGeneralization() && progress->value() == 1000,
            "Successful task did not publish complete result");
    requireSameCamera();
+   double layer_totals = 0;
+   for (int i = 0; i < static_cast<int>(session.data().layers.size()); ++i)
+   {
+      const auto &timing = session.layerMetrics(i);
+      require(timing.simplification_ms >= 0 && timing.metrics_ms >= 0 &&
+                 timing.total_ms + 1e-6 >= timing.simplification_ms + timing.metrics_ms,
+              "Layer timing boundaries inconsistent");
+      layer_totals += timing.total_ms;
+   }
+   require(session.generalizationTotalMs() + 1e-6 >= layer_totals, "Job time excludes layer work");
    require(progress_updates > 0 && heartbeat > 0, "Missing progress or GUI heartbeat");
    const auto previous_vertices = session.layerMetrics(0).result_vertices;
    const auto previous_items = window.findChild<QGraphicsView *>()->scene()->items();
@@ -450,11 +460,9 @@ void checkDistanceCoverageUi()
    session.regenerateAsync();
    awaitIdle(session);
    auto* table = window.findChild<QTableWidget*>();
-   require(table && table->rowCount() == 1 && table->columnCount() == 8, "Missing quality table");
-   require(table->item(0, 4)->text().startsWith("0 /")
-              && table->item(0, 5)->text() == "0"
-              && table->item(0, 6)->text() == "1 / 1"
-              && table->item(0, 7)->text() == "0 / 1",
+   require(table && table->rowCount() == 1 && table->columnCount() == 11, "Missing quality table");
+   require(table->item(0, 4)->text() == "0" && table->item(0, 5)->text() == "0" &&
+              table->item(0, 6)->text() == "1 / 1" && table->item(0, 7)->text() == "0 / 1",
            "UI did not show valid distance alongside excluded and degenerate counts");
    auto object = document.object();
    object["features"] = QJsonArray{object["features"].toArray().last()};
@@ -463,10 +471,50 @@ void checkDistanceCoverageUi()
    session.loadPath(path);
    session.regenerateAsync();
    awaitIdle(session);
-   require(table->item(0, 4)->text().startsWith("N/A /")
-              && table->item(0, 5)->text() == "N/A"
-              && table->item(0, 6)->text() == "0 / 1",
+   require(table->item(0, 4)->text() == "N/A" && table->item(0, 5)->text() == "N/A" &&
+              table->item(0, 6)->text() == "0 / 1",
            "UI displayed zero distance with no evaluated features");
+}
+
+void checkProjectedScenario(const QString &path)
+{
+   core::Session session;
+   session.loadPath(path);
+   require(session.state() == core::Session::State::Ready && !session.data().layers.empty() &&
+              session.data().reference_crs.units == "metre",
+           "Projected scenario not loaded in metres");
+   MainWindow window(&session);
+   window.show();
+   for (const auto &name : gen::availableAlgorithms())
+   {
+      session.setAlgorithm(name);
+      const auto &spec = session.currentSpecs().front();
+      require(spec.min_value == 1 && spec.max_value >= 10000, "Metre parameter range not updated");
+      auto *spin = window.findChild<QDoubleSpinBox *>();
+      require(spin && spin->minimum() == spec.min_value && spin->maximum() == spec.max_value,
+              "Projected range not reflected in UI");
+      session.setParam(spec.name, name == "visvalingam-whyatt" ? 100000 : 1000);
+      session.regenerateAsync();
+      awaitIdle(session);
+      require(session.hasGeneralization() && session.resultMatchesSettings(),
+              "Projected calculation failed");
+      double sum_generation = 0, sum_metrics = 0, sum_total = 0;
+      for (int i = 0; i < static_cast<int>(session.data().layers.size()); ++i)
+      {
+         const auto &metrics = session.layerMetrics(i);
+         require(metrics.total_ms >= metrics.simplification_ms + metrics.metrics_ms,
+                 "Projected timing inconsistent");
+         require(metrics.evaluated_features + metrics.invalid_comparisons == metrics.orig_features,
+                 "Projected coverage inconsistent");
+         sum_generation += metrics.simplification_ms;
+         sum_metrics += metrics.metrics_ms;
+         sum_total += metrics.total_ms;
+      }
+      require(session.generalizationTotalMs() >= sum_total, "Projected job timing inconsistent");
+      std::cout << path.toStdString() << " " << name << ": gen=" << sum_generation
+                << " ms, eval=" << sum_metrics << " ms, job=" << session.generalizationTotalMs()
+                << " ms\n";
+   }
 }
 
 void checkLargeCancellation(const QString &path)
@@ -531,6 +579,8 @@ int main(int argc, char **argv)
          checkSessionAndUi(QString::fromLocal8Bit(argv[1]));
       if (argc > 2)
          checkLargeCancellation(QString::fromLocal8Bit(argv[2]));
+      for (int i = 3; i < argc; ++i)
+         checkProjectedScenario(QString::fromLocal8Bit(argv[i]));
       std::cout << "PASS: algorithms, metrics, progress, cancellation, queued restart, snapshots, "
                    "UI, reload, shutdown\n";
       return 0;

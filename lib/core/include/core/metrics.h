@@ -33,7 +33,9 @@ struct SimplificationMetrics
    double average_deviation = std::numeric_limits<double>::quiet_NaN();
 
    // Производительность
-   double elapsed_ms = 0.0;
+   double simplification_ms = 0.0; // подготовка результата + упрощение + прогресс
+   double metrics_ms = 0.0; // evaluate(), включая проверки геометрии и прогресс
+   double total_ms = 0.0; // полный расчёт слоя в worker, без загрузки и GUI
 };
 
 // Число вершин в одной геометрии (для Multi* — суммируется по компонентам).
@@ -75,10 +77,11 @@ double averageDeviation(const gi::LineString &a, const gi::LineString &b, std::s
 // evaluated_features показывает число учтённых пар. Без них обе дистанции NaN.
 // Сжатие и счётчики вырожденности считаются по всем фичам, включая исключённые.
 // Отмена бросает gen::Cancelled; progress получает число оценённых фич слоя.
-// elapsed_ms — передаётся снаружи (замер вокруг simplify()).
+// simplification_ms — передаётся снаружи (замер вокруг simplify()).
 SimplificationMetrics evaluate(const std::vector<gi::Feature> &original,
-                               const std::vector<gi::Feature> &simplified, double elapsed_ms = 0.0,
-                               std::size_t stride = 8, const gen::CancellationCheck &cancelled = {},
+                               const std::vector<gi::Feature> &simplified,
+                               double simplification_ms = 0.0, std::size_t stride = 8,
+                               const gen::CancellationCheck &cancelled = {},
                                const std::function<void(std::size_t)> &progress = {});
 
 } // namespace core::metrics

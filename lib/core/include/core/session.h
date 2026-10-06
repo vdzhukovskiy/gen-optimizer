@@ -83,6 +83,10 @@ public:
       return result_params_;
    }
    bool resultMatchesSettings() const;
+   double generalizationTotalMs() const noexcept
+   {
+      return result_total_ms_;
+   }
 
    // Упрощённые фичи слоя. Пустой вектор, если пересчёт не выполнялся.
    const std::vector<gi::Feature>& simplified(int layer_index) const;
@@ -115,6 +119,8 @@ private:
   };
 
   void startGeneralization(GeneralizationRequest request);
+  gen::ParamSpecs specsForCurrentData() const;
+  void refreshParamSpecs();
   void setState(State s);
   void clearGeneralization();
   static double defaultParamValue(const gen::ParamSpec &spec);
@@ -129,6 +135,7 @@ private:
   GeneralizationProgress progress_;
   std::string result_algorithm_;
   gen::ParamSet result_params_;
+  double result_total_ms_ = 0.0;
 
   std::unique_ptr<gen::GeneralizationAlgorithm> algorithm_;
   gen::ParamSet params_;

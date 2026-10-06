@@ -149,6 +149,7 @@ ParamSpecs LiOpenshaw::paramSpecs() const
       1.0,
       0.001,
       /*logarithmic=*/true,
+      ParamDimension::Length,
    }};
 }
 

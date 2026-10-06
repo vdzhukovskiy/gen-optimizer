@@ -425,7 +425,7 @@ double averageDeviation(const gi::LineString &a, const gi::LineString &b, std::s
 }
 
 SimplificationMetrics evaluate(const std::vector<gi::Feature> &original,
-                               const std::vector<gi::Feature> &simplified, double elapsed_ms,
+                               const std::vector<gi::Feature> &simplified, double simplification_ms,
                                std::size_t stride, const gen::CancellationCheck &cancelled,
                                const std::function<void(std::size_t)> &progress)
 {
@@ -443,7 +443,7 @@ SimplificationMetrics evaluate(const std::vector<gi::Feature> &original,
       m.result_vertices += countVertices(feature.geometry);
    }
    m.orig_features = original.size();
-   m.elapsed_ms = elapsed_ms;
+   m.simplification_ms = simplification_ms;
 
    for (const auto &f : simplified)
    {

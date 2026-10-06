@@ -117,10 +117,13 @@ gi::LineString VisvalingamWhyatt::simplifyLine(const gi::LineString &line, const
 ParamSpecs VisvalingamWhyatt::paramSpecs() const
 {
    return {{
-       "area_threshold",
-       "Minimum effective triangle area, in CRS units squared",
-       1e-6, 1e-1, 1e-6,
-       /*logarithmic=*/true,
+      "area_threshold",
+      "Minimum effective triangle area, in CRS units squared",
+      1e-6,
+      1e-1,
+      1e-6,
+      /*logarithmic=*/true,
+      ParamDimension::Area,
    }};
 }
 

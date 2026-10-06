@@ -28,6 +28,7 @@ struct GeneralizationResult
 {
    std::vector<std::vector<gi::Feature>> layers;
    std::vector<metrics::SimplificationMetrics> metrics;
+   double total_ms = 0.0; // полный run(), включая подготовку и все слои
    QString error;
    bool interrupted = false;
 };

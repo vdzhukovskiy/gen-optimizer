@@ -25,10 +25,10 @@ StatusPanel::StatusPanel(QWidget *parent) : QWidget(parent)
    summary_->setTextInteractionFlags(Qt::TextSelectableByMouse);
    summary_->setWordWrap(true);
 
-   table_ = new QTableWidget(0, 8);
-   table_->setHorizontalHeaderLabels({tr("Layer"), tr("V orig"), tr("V res"), tr("ratio"),
-                                      tr("H / ms"), tr("Avg"), tr("Used / skipped"),
-                                      tr("Deg orig / res")});
+   table_ = new QTableWidget(0, 11);
+   table_->setHorizontalHeaderLabels({tr("Layer"), tr("V orig"), tr("V res"), tr("ratio"), tr("H"),
+                                      tr("Avg"), tr("Used / skipped"), tr("Deg orig / res"),
+                                      tr("Gen ms"), tr("Eval ms"), tr("Layer ms")});
    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
    table_->horizontalHeader()->setStretchLastSection(true);
    table_->verticalHeader()->setVisible(false);
@@ -58,7 +58,8 @@ void StatusPanel::updateFrom(const core::Session &session)
 
    double sum_orig = 0.0;
    double sum_res = 0.0;
-   double sum_time = 0.0;
+   double sum_generation = 0.0;
+   double sum_metrics = 0.0;
    double max_h = std::numeric_limits<double>::quiet_NaN();
    std::size_t evaluated_features = 0;
    std::size_t orig_degenerate_features = 0;
@@ -70,7 +71,8 @@ void StatusPanel::updateFrom(const core::Session &session)
       const auto &m = session.layerMetrics(i);
       sum_orig += static_cast<double>(m.orig_vertices);
       sum_res += static_cast<double>(m.result_vertices);
-      sum_time += m.elapsed_ms;
+      sum_generation += m.simplification_ms;
+      sum_metrics += m.metrics_ms;
       if (m.evaluated_features > 0)
          max_h = std::isfinite(max_h) ? std::max(max_h, m.hausdorff) : m.hausdorff;
       evaluated_features += m.evaluated_features;
@@ -89,8 +91,7 @@ void StatusPanel::updateFrom(const core::Session &session)
       set(1, QString::number(m.orig_vertices));
       set(2, QString::number(m.result_vertices));
       set(3, QString::number(m.compression_ratio, 'f', 3));
-      set(4,
-          QStringLiteral("%1 / %2").arg(distanceLabel(m.hausdorff)).arg(m.elapsed_ms, 0, 'f', 1));
+      set(4, distanceLabel(m.hausdorff));
       set(5, distanceLabel(m.average_deviation));
       set(6, QStringLiteral("%1 / %2")
                 .arg(static_cast<qulonglong>(m.evaluated_features))
@@ -98,6 +99,15 @@ void StatusPanel::updateFrom(const core::Session &session)
       set(7, QStringLiteral("%1 / %2")
                 .arg(static_cast<qulonglong>(m.orig_degenerate_features))
                 .arg(static_cast<qulonglong>(m.degenerate_features)));
+      set(8, QString::number(m.simplification_ms, 'f', 2));
+      set(9, QString::number(m.metrics_ms, 'f', 2));
+      set(10, QString::number(m.total_ms, 'f', 2));
+      table_->item(i, 8)->setToolTip(
+         tr("Result preparation and simplification, including progress updates."));
+      table_->item(i, 9)->setToolTip(
+         tr("Quality metrics, including geometry checks and progress updates."));
+      table_->item(i, 10)->setToolTip(
+         tr("Full layer calculation. Loading and rendering are excluded."));
       const QString quality_scope = tr("Distances use only comparable, non-degenerate features. "
                                        "Evaluated: %1; excluded: %2. "
                                        "N/A means no suitable features.")
@@ -123,10 +133,13 @@ void StatusPanel::updateFrom(const core::Session &session)
          .arg(static_cast<qulonglong>(orig_degenerate_features))
          .arg(static_cast<qulonglong>(degenerate_features));
    summary_->setText(settings + QStringLiteral("\n") +
-                     tr("Total: %1 → %2 vertices (ratio %3), max H (evaluated) %4, time %5 ms")
+                     tr("Total: %1 → %2 vertices (ratio %3), max H (evaluated) %4\nGeneration %5 "
+                        "ms, metrics %6 ms, calculation %7 ms")
                         .arg(static_cast<qulonglong>(sum_orig))
                         .arg(static_cast<qulonglong>(sum_res))
                         .arg(total_ratio, 0, 'f', 3)
                         .arg(distanceLabel(max_h))
-                        .arg(sum_time, 0, 'f', 1));
+                        .arg(sum_generation, 0, 'f', 2)
+                        .arg(sum_metrics, 0, 'f', 2)
+                        .arg(session.generalizationTotalMs(), 0, 'f', 2));
 }

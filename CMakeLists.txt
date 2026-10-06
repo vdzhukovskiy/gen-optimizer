@@ -40,6 +40,7 @@ target_include_directories(gen-optimizer PRIVATE
 )
 
 add_subdirectory(lib)
+add_subdirectory(tools)
 
 option(GEN_OPTIMIZER_BUILD_TESTS "Build cancellation and asynchronous UI checks" OFF)
 if(GEN_OPTIMIZER_BUILD_TESTS)

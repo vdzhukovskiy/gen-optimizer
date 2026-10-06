@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "norway_coast",
+      "description": "Norwegian coast and fjords: detailed coastal lines",
+      "source_layer": "ne_10m_coastline",
+      "geometry": "line",
+      "bbox_wgs84": [6.0, 58.0, 9.0, 61.0],
+      "target_epsg": 32632
+    },
+    {
+      "id": "central_europe_rivers",
+      "description": "Central European rivers: mixed straight and sinuous sections",
+      "source_layer": "ne_10m_rivers_lake_centerlines",
+      "geometry": "line",
+      "bbox_wgs84": [8.0, 48.0, 12.0, 51.0],
+      "target_epsg": 32632
+    },
+    {
+      "id": "finland_lakes",
+      "description": "Finnish lakes: polygon boundaries, holes and small objects",
+      "source_layer": "ne_10m_lakes",
+      "geometry": "polygon",
+      "bbox_wgs84": [24.0, 60.0, 30.0, 64.0],
+      "target_epsg": 32635
+    }
+  ]
+}
