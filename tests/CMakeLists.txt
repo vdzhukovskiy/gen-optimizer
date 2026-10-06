@@ -16,3 +16,8 @@ set_tests_properties(cancellation-checks PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     TIMEOUT 60
 )
+
+add_executable(metrics-checks metrics_checks.cpp)
+target_link_libraries(metrics-checks PRIVATE core)
+add_test(NAME metrics-checks COMMAND metrics-checks)
+set_tests_properties(metrics-checks PROPERTIES TIMEOUT 60)

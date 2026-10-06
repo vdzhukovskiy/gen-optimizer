@@ -20,6 +20,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTemporaryDir>
+#include <QTableWidget>
 #include <QThread>
 #include <QTimer>
 #include <cmath>
@@ -425,6 +426,49 @@ void checkSessionAndUi(const QString &path)
    }
 }
 
+void checkDistanceCoverageUi()
+{
+   QTemporaryDir directory;
+   require(directory.isValid(), "Cannot create quality UI fixture directory");
+   const QString path = directory.filePath("quality.geojson");
+   auto document = QJsonDocument::fromJson(R"({"type":"FeatureCollection","features":[
+      {"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":[[0,0],[10,0]]}},
+      {"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[2,0],[2.001,0],[2,0.001],[2,0]]]}}
+   ]})");
+   const auto save = [&] {
+      QFile file(path);
+      require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "Cannot write quality UI fixture");
+      const auto bytes = document.toJson();
+      require(file.write(bytes) == bytes.size(), "Incomplete quality UI fixture");
+   };
+   save();
+   core::Session session;
+   session.loadPath(path);
+   session.setParam("epsilon", 1.0);
+   MainWindow window(&session);
+   window.show();
+   session.regenerateAsync();
+   awaitIdle(session);
+   auto* table = window.findChild<QTableWidget*>();
+   require(table && table->rowCount() == 1 && table->columnCount() == 8, "Missing quality table");
+   require(table->item(0, 4)->text().startsWith("0 /")
+              && table->item(0, 5)->text() == "0"
+              && table->item(0, 6)->text() == "1 / 1"
+              && table->item(0, 7)->text() == "0 / 1",
+           "UI did not show valid distance alongside excluded and degenerate counts");
+   auto object = document.object();
+   object["features"] = QJsonArray{object["features"].toArray().last()};
+   document.setObject(object);
+   save();
+   session.loadPath(path);
+   session.regenerateAsync();
+   awaitIdle(session);
+   require(table->item(0, 4)->text().startsWith("N/A /")
+              && table->item(0, 5)->text() == "N/A"
+              && table->item(0, 6)->text() == "0 / 1",
+           "UI displayed zero distance with no evaluated features");
+}
+
 void checkLargeCancellation(const QString &path)
 {
    core::Session session;
@@ -479,6 +523,7 @@ int main(int argc, char **argv)
    {
       checkLiOpenshawGrid();
       checkAlgorithmsAndMetrics();
+      checkDistanceCoverageUi();
       QTemporaryDir directory;
       require(directory.isValid(), "Cannot create temporary directory");
       checkSessionAndUi(writeFixture(directory));
